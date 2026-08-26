@@ -1,129 +1,145 @@
-from fastapi import FastAPI, Query
+# backend/api/server.py
+
+from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List, Dict
-from functools import lru_cache
+from typing import List, Dict, Optional
 import time
+import sys
+import os
 
-from main import run_pipeline
-from models.vehicle import VEHICLE_PROFILES
+# Make sure imports resolve from project root when running via uvicorn
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# -----------------------------
-# APP INIT
-# -----------------------------
+from main import run_pipeline, run_custom_pipeline, build_stats
+from models.vehicle import VEHICLE_PROFILES, get_vehicle
+
+# ---------------------------------------------------------------------------
+# App init
+# ---------------------------------------------------------------------------
 app = FastAPI(
     title="FoveaDrive API",
     description="Adaptive 2.5D Mapping with Vehicle-Aware Drivability",
-    version="1.0.0"
+    version="1.0.0",
 )
 
-# -----------------------------
-# CORS (IMPORTANT for frontend)
-# -----------------------------
+# ---------------------------------------------------------------------------
+# CORS  (open for hackathon — tighten for production)
+# ---------------------------------------------------------------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # allow all for hackathon
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# -----------------------------
-# CACHE (PER VEHICLE)
-# -----------------------------
-@lru_cache(maxsize=5)
-def cached_pipeline(vehicle: str) -> List[Dict]:
-    return run_pipeline(vehicle)
+# ---------------------------------------------------------------------------
+# Simple in-process cache keyed by vehicle type
+# ---------------------------------------------------------------------------
+_cache: Dict[str, List[Dict]] = {}
 
 
-# -----------------------------
-# HEALTH CHECK
-# -----------------------------
+def _get_cached(vehicle: str) -> List[Dict]:
+    if vehicle not in _cache:
+        _cache[vehicle] = run_pipeline(vehicle)
+    return _cache[vehicle]
+
+
+# ---------------------------------------------------------------------------
+# Routes
+# ---------------------------------------------------------------------------
+
 @app.get("/health")
 def health():
-    return {
-        "status": "ok",
-        "message": "FoveaDrive API is running"
-    }
+    """Liveness check."""
+    return {"status": "ok", "message": "FoveaDrive API is running", "timestamp": time.time()}
 
 
-# -----------------------------
-# AVAILABLE VEHICLES
-# -----------------------------
 @app.get("/vehicles")
-def get_vehicles():
-    return {
-        "available_vehicles": list(VEHICLE_PROFILES.keys())
-    }
+def list_vehicles():
+    """Return all available vehicle profiles."""
+    return {vtype: {**profile, "id": vtype} for vtype, profile in VEHICLE_PROFILES.items()}
 
 
-# -----------------------------
-# MAIN MAP ENDPOINT
-# -----------------------------
+@app.get("/vehicle/{vehicle_type}")
+def get_vehicle_profile(vehicle_type: str):
+    """Return a single vehicle profile by type."""
+    try:
+        return {**get_vehicle(vehicle_type), "id": vehicle_type}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
 @app.get("/map")
 def get_map(
-    vehicle: str = Query("sedan", description="Vehicle type"),
-    limit: int = Query(500, ge=1, le=5000, description="Max number of grid cells"),
-    mode: str = Query("lite", description="lite or full")
+    vehicle: str = Query(default="sedan", description="sedan | suv | truck"),
 ):
-    start_time = time.time()
+    """Full grid cells for a preset vehicle profile."""
+    try:
+        get_vehicle(vehicle)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return _get_cached(vehicle)
 
-    # Validate vehicle
-    if vehicle not in VEHICLE_PROFILES:
-        return {
-            "error": f"Invalid vehicle. Choose from {list(VEHICLE_PROFILES.keys())}"
-        }
 
-    # Validate mode
-    if mode not in ["lite", "full"]:
-        return {
-            "error": "Invalid mode. Use 'lite' or 'full'"
-        }
+@app.get("/map/stats")
+def get_map_stats(
+    vehicle: str = Query(default="sedan", description="sedan | suv | truck"),
+):
+    """Summary statistics for a preset vehicle type."""
+    try:
+        get_vehicle(vehicle)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return build_stats(_get_cached(vehicle), vehicle_label=vehicle)
 
-    # Get processed data (cached)
-    data = cached_pipeline(vehicle)
-    data = data[:limit]
 
-    # -----------------------------
-    # MODE HANDLING
-    # -----------------------------
-    if mode == "lite":
-        processed_data = [
-            {
-                "x": d["x"],
-                "y": d["y"],
-                "drivable": d["drivable"]
-            }
-            for d in data
-        ]
+@app.get("/map/custom")
+def get_map_custom(
+    ground_clearance: float          = Query(...,  description="Ground clearance in metres e.g. 0.25"),
+    width:            float          = Query(...,  description="Vehicle width in metres e.g. 1.8"),
+    wheel_radius:     float          = Query(...,  description="Wheel radius in metres e.g. 0.32"),
+    max_roughness:    Optional[float] = Query(None, description="Height-std tolerance (auto-derived if omitted)"),
+):
+    """
+    Run the pipeline with fully custom vehicle parameters — used by the
+    Kinematic Calibration sliders in the UI.
 
-    elif mode == "full":
-        processed_data = [
-            {
-                "x": d["x"],
-                "y": d["y"],
-                "height": d["height"],
-                "terrain": d["terrain"],
-                "drivable": d["drivable"]
-            }
-            for d in data
-        ]
+    Returns cells + stats in one response so the slider only needs
+    a single fetch per change:
 
-    # -----------------------------
-    # META INFO
-    # -----------------------------
-    total = len(data)
-    drivable = sum(1 for d in data if d["drivable"])
+        { params: {...}, stats: {...}, cells: [...] }
+    """
+    if not (0.01 <= ground_clearance <= 2.0):
+        raise HTTPException(status_code=400, detail="ground_clearance must be 0.01 – 2.0 m")
+    if not (0.5  <= width            <= 5.0):
+        raise HTTPException(status_code=400, detail="width must be 0.5 – 5.0 m")
+    if not (0.1  <= wheel_radius     <= 1.0):
+        raise HTTPException(status_code=400, detail="wheel_radius must be 0.1 – 1.0 m")
 
-    end_time = time.time()
+    cells = run_custom_pipeline(
+        ground_clearance=ground_clearance,
+        width=width,
+        wheel_radius=wheel_radius,
+        max_roughness=max_roughness,
+    )
+
+    effective_roughness = max_roughness if max_roughness is not None else round(ground_clearance * 0.6, 3)
 
     return {
-        "meta": {
-            "vehicle": vehicle,
-            "mode": mode,
-            "total_cells": total,
-            "drivable_cells": drivable,
-            "blocked_cells": total - drivable,
-            "response_time_ms": round((end_time - start_time) * 1000, 2)
+        "params": {
+            "ground_clearance": ground_clearance,
+            "width":            width,
+            "wheel_radius":     wheel_radius,
+            "max_roughness":    effective_roughness,
         },
-        "data": processed_data
+        "stats": build_stats(cells, vehicle_label="custom"),
+        "cells": cells,
     }
+
+
+@app.post("/cache/clear")
+def clear_cache():
+    """Force-clear the pipeline cache."""
+    _cache.clear()
+    return {"message": "Cache cleared"}

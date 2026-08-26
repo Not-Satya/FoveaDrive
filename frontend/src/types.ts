@@ -1,21 +1,22 @@
+// frontend/src/types.ts
+
 export type VehicleProfile = 'SEDAN' | 'SUV' | 'TRUCK';
 
+export type MappingMode = 'RAW_POINT_CLOUD' | 'DRIVABILITY_MAP';
+
 export interface KinematicParams {
-  groundClearance: number;
-  chassisWidth: number;
-  wheelRadius: number;
-  curbWeight: number;
+  groundClearance: number;  // cm
+  chassisWidth:    number;  // metres
+  wheelRadius:     number;  // cm
+  curbWeight:      number;  // tonnes
 }
 
 export interface TelemetryData {
-  fpsRate: number;
-  busStatus: string;
+  fpsRate:     number;
+  busStatus:   string;
   inputStream: string;
-  friction: number;
-  incline: number;
-  speed: number;
-  lat: number;
-  lng: number;
+  lat:         number;
+  lng:         number;
+  friction:    number;
+  incline:     number;
 }
-
-export type MappingMode = 'RAW_POINT_CLOUD' | 'HEATMAP';
