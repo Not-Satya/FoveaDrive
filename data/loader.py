@@ -102,3 +102,55 @@ def load_kitti_bin(filepath: str | Path) -> np.ndarray:
 
     raw = np.fromfile(str(path), dtype=np.float32).reshape(-1, 4)
     return raw[:, :3]   # drop intensity, keep x y z
+
+
+# ---------------------------------------------------------------------------
+# Curated dataset loader  (real KITTI frames under data/lidar/)
+# ---------------------------------------------------------------------------
+
+DATASET_DIR = Path(__file__).parent / "lidar"
+
+
+def list_frames() -> list[str]:
+    """Return the sorted frame ids in the curated dataset (e.g. 'frame_000000')."""
+    return sorted(p.stem for p in (DATASET_DIR / "raw").glob("*.bin"))
+
+
+def load_frame(
+    frame_id: str = "frame_000000",
+    normalize_ground: bool = True,
+    forward_only: bool = False,
+    max_range: float = 100.0,
+) -> np.ndarray:
+    """
+    Load one curated KITTI frame as an (N, 3) float32 (x, y, z) cloud, ready
+    for the AdaptiveGrid.
+
+    KITTI's Velodyne is mounted ~1.7 m above the road, so the raw ground plane
+    sits near Z ≈ -1.6 m. The rest of the pipeline (and the frontend) assume the
+    road surface is ≈ 0, so `normalize_ground` shifts the cloud down by the
+    estimated ground height. This is required for real frames to classify
+    sensibly — without it, the entire road reads as a deep depression.
+
+    Args:
+        frame_id:         canonical id, e.g. "frame_000000".
+        normalize_ground: subtract the estimated ground plane so road ≈ 0.
+        forward_only:     keep only points ahead of the vehicle (x > 0).
+        max_range:        drop points beyond this radial distance (m) — matches
+                          the grid's far-zone cap so we don't bin what we ignore.
+    """
+    pts = load_kitti_bin(DATASET_DIR / "raw" / f"{frame_id}.bin")   # (N, 3)
+
+    radial = np.hypot(pts[:, 0], pts[:, 1])
+    pts = pts[radial <= max_range]
+
+    if forward_only:
+        pts = pts[pts[:, 0] > 0.0]
+
+    if normalize_ground:
+        near = pts[np.hypot(pts[:, 0], pts[:, 1]) < 30.0]
+        ground_z = float(np.median(near[:, 2])) if len(near) else float(np.median(pts[:, 2]))
+        pts = pts.copy()
+        pts[:, 2] -= ground_z   # bring road surface to ~0
+
+    return np.ascontiguousarray(pts, dtype=np.float32)

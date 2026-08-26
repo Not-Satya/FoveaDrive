@@ -1,10 +1,26 @@
 # backend/main.py
 
-from data.loader import load_sample_points
+from config import DATA_CONFIG
+from data.loader import load_frame, load_sample_points
 from processing.grid import AdaptiveGrid
 from processing.terrain import classify_terrain
 from processing.drivability import evaluate_drivability
 from models.vehicle import get_vehicle
+
+
+def _load_points():
+    """
+    Load the active point cloud based on DATA_CONFIG:
+      - "kitti"     → a real curated frame from data/lidar/raw/
+      - "synthetic" → the built-in synthetic generator (no dataset needed)
+    """
+    if DATA_CONFIG["source"] == "synthetic":
+        return load_sample_points()
+    return load_frame(
+        frame_id=DATA_CONFIG["frame_id"],
+        normalize_ground=DATA_CONFIG["normalize_ground"],
+        forward_only=DATA_CONFIG["forward_only"],
+    )
 
 # ---------------------------------------------------------------------------
 # Shared point cloud + grid (computed once, reused by all pipelines)
@@ -20,7 +36,7 @@ def _get_base_grid() -> list[dict]:
     """
     global _POINTS, _BASE_GRID
     if _BASE_GRID is None:
-        _POINTS = load_sample_points()
+        _POINTS = _load_points()
         grid = AdaptiveGrid()
         grid.add_points(_POINTS)
         _BASE_GRID = classify_terrain(grid.export())
