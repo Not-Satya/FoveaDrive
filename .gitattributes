@@ -1,0 +1,2 @@
+data/lidar/raw/*.bin filter=lfs diff=lfs merge=lfs -text
+data/lidar/labels/*.label filter=lfs diff=lfs merge=lfs -text
