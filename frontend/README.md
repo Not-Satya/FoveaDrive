@@ -2,6 +2,10 @@
 
 A high-performance, responsive 2.5D Head-Up Display (HUD) and dynamic telemetry control panel built for **FoveaDrive**. The front-end renders dynamic LiDAR point-cloud visuals, real-time vehicle kinematics, and terrain drivability metrics through an intuitive cyber-HUD dashboard.
 
+<p align="center">
+  <img src="./public/Screenshot%202026-08-26%20115945.png" alt="FoveaDrive HUD Interface Preview" width="100%" />
+</p>
+
 **Developer:** [arhennia](https://github.com/arhennia)
 
 ---
@@ -29,6 +33,8 @@ A high-performance, responsive 2.5D Head-Up Display (HUD) and dynamic telemetry 
 
 ```text
 frontend/
+├── public/
+│   └── Screenshot 2026-08-26 115945.png
 ├── src/
 │   ├── components/
 │   │   ├── FoveaDriveHUD.tsx     # Main container component
@@ -44,47 +50,3 @@ frontend/
 ├── package.json
 ├── tailwind.config.js
 └── vite.config.js
-
-```
-
----
-
-## Getting Started
-
-### Prerequisites
-
-Make sure you have Node.js (v18+) installed.
-
-### Installation
-
-1. Navigate to the frontend directory:
-```bash
-cd frontend
-
-```
-
-
-2. Install dependencies:
-```bash
-npm install
-
-```
-
-
-3. Start the Vite development server:
-```bash
-npm run dev
-
-```
-
-
-4. Open `http://localhost:5173` in your browser.
-
----
-
-## Available Scripts
-
-* `npm run dev` — Starts the development server with HMR.
-* `npm run build` — Compiles production-ready TypeScript assets to the `dist` folder.
-* `npm run lint` — Runs Oxlint checks across the codebase.
-* `npm run preview` — Previews the production build locally.
