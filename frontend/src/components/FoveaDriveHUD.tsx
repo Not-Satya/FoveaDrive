@@ -34,6 +34,8 @@ export function FoveaDriveHUD() {
           toggleMappingMode={toggleMappingMode}
           cells={cells}
           loading={mapLoading}
+          heading={359.7}
+          elevation={telemetry.incline}
         />
       </div>
 

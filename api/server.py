@@ -10,7 +10,7 @@ import os
 # Make sure imports resolve from project root when running via uvicorn
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from main import run_pipeline, run_custom_pipeline, build_stats
+from main import run_pipeline, run_custom_pipeline, build_stats, invalidate_base_grid
 from models.vehicle import VEHICLE_PROFILES, get_vehicle
 
 # ---------------------------------------------------------------------------
@@ -140,6 +140,7 @@ def get_map_custom(
 
 @app.post("/cache/clear")
 def clear_cache():
-    """Force-clear the pipeline cache."""
+    """Force-clear the pipeline cache and rebuild the base grid."""
     _cache.clear()
+    invalidate_base_grid()
     return {"message": "Cache cleared"}

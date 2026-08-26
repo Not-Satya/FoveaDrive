@@ -34,7 +34,7 @@ export function ControlPanel(props: ReturnType<typeof useHUDState>) {
                   onClick={() => handleProfileChange(profile)}
                   className={`w-full text-left p-3 rounded border transition-all flex justify-between items-center ${
                     isActive 
-                      ? 'border-[#2B4C6F] bg-icy-blue/10 text-white' 
+                      ? 'border-[#E879F9]/70 bg-[#A21CAF]/25 text-white shadow-[0_0_18px_rgba(232,121,249,0.18)]' 
                       : 'border-[#2B4C6F]/50 text-icy-blue/60 hover:bg-icy-blue/5 hover:text-icy-blue'
                   }`}
                 >
@@ -74,15 +74,18 @@ export function ControlPanel(props: ReturnType<typeof useHUDState>) {
                     className="absolute inset-0 w-full h-1 bg-[#2B4C6F] appearance-none rounded-full outline-none z-10 opacity-0 cursor-pointer"
                   />
                   {/* Visual Background */}
-                  <div className="absolute inset-x-0 h-1 bg-[#2B4C6F]" />
+                  <div
+                    className="absolute inset-x-0 h-1 rounded-full"
+                    style={{ background: 'linear-gradient(90deg, #7c3aed, #22d3ee)' }}
+                  />
                   {/* Visual fill element */}
-                  <div 
-                    className="absolute left-0 h-1 bg-icy-blue pointer-events-none transition-all duration-500 ease-out" 
+                  <div
+                    className="absolute left-0 h-1 bg-white/80 pointer-events-none transition-all duration-500 ease-out rounded-full"
                     style={{ width: `${((val - min) / (max - min)) * 100}%` }}
                   />
                   {/* Custom Thumb */}
-                  <div 
-                    className="absolute size-[9px] bg-white rounded-sm shadow-[0_0_8px_rgba(188,227,255,0.8)] pointer-events-none -translate-x-1/2 transition-all duration-500 ease-out group-hover:scale-125"
+                  <div
+                    className="absolute size-[10px] bg-white rounded-full shadow-[0_0_10px_rgba(188,227,255,0.9)] pointer-events-none -translate-x-1/2 transition-all duration-500 ease-out group-hover:scale-125"
                     style={{ left: `${((val - min) / (max - min)) * 100}%` }}
                   />
                 </div>
@@ -98,11 +101,11 @@ export function ControlPanel(props: ReturnType<typeof useHUDState>) {
           <div className="flex flex-col gap-4 flex-1 justify-center">
             <div className="flex flex-col">
               <span className="text-[9px] text-icy-blue/40 uppercase">FPS Rate</span>
-              <span className="text-lg text-white tabular-nums">{telemetry.fpsRate.toFixed(1)} <span className="text-[10px] text-icy-blue/60">Hz</span></span>
+              <span className="text-lg text-emerald-400 tabular-nums">{telemetry.fpsRate.toFixed(1)} <span className="text-[10px] text-emerald-400/70">Hz</span></span>
             </div>
             <div className="flex flex-col">
               <span className="text-[9px] text-icy-blue/40 uppercase">Hardware Bus Status</span>
-              <span className="text-sm text-icy-blue">{telemetry.busStatus}</span>
+              <span className="text-sm text-emerald-400">{telemetry.busStatus}</span>
             </div>
             <div className="flex flex-col">
               <span className="text-[9px] text-icy-blue/40 uppercase">Input Stream</span>
@@ -116,19 +119,13 @@ export function ControlPanel(props: ReturnType<typeof useHUDState>) {
           <div className="space-y-4">
             <div className="text-[10px] text-icy-blue/50 uppercase">Environmental Data</div>
             <div className="grid grid-cols-2 gap-4 pt-2">
-              <div className="flex flex-col">
-                <span className="text-[9px] text-icy-blue/40 uppercase">Friction</span>
-                <span className="text-lg text-icy-blue/90 tabular-nums">{telemetry.friction.toFixed(2)} <span className="text-[10px] text-icy-blue/50">mu</span></span>
-              </div>
-              <div className="flex flex-col">
-                <span className="text-[9px] text-icy-blue/40 uppercase">Incline</span>
-                <span className="text-lg text-icy-blue/90 tabular-nums">{telemetry.incline.toFixed(1)}° <span className="text-[10px] text-icy-blue/50">rad</span></span>
-              </div>
+              <SparkStat label="Friction" value={`${telemetry.friction.toFixed(2)}`} unit="mu" seed={telemetry.friction} />
+              <SparkStat label="Incline" value={`${telemetry.incline.toFixed(1)}°`} unit="rad" seed={telemetry.incline} />
             </div>
           </div>
           <button 
             onClick={handleRecalibrate}
-            className="w-full py-3 mt-4 border border-[#2B4C6F] text-icy-blue bg-[#060B14] hover:bg-icy-blue/10 transition-all uppercase text-[10px] tracking-widest active:scale-[0.98]"
+            className="w-full py-3 mt-4 border border-[#2B4C6F] text-icy-blue bg-[#060B14] hover:bg-fuchsia-500/10 hover:border-[#E879F9]/60 transition-all uppercase text-[10px] tracking-widest active:scale-[0.98]"
             style={
               calibrationState === "processing" ? { opacity: 0.5 } : 
               calibrationState === "complete" ? { borderColor: "#BCE3FF", color: "#fff" } : 
@@ -142,5 +139,26 @@ export function ControlPanel(props: ReturnType<typeof useHUDState>) {
         </div>
       </div>
     </section>
+  );
+}
+
+function SparkStat({ label, value, unit, seed }: { label: string; value: string; unit: string; seed: number }) {
+  const pts = Array.from({ length: 12 }, (_, i) => {
+    const n = Math.sin(seed * 8 + i * 0.85) * 0.35 + Math.sin(i * 1.7 + seed) * 0.2 + 0.5;
+    const x = (i / 11) * 48;
+    const y = 14 - n * 12;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-[9px] text-icy-blue/40 uppercase">{label}</span>
+      <span className="text-lg text-icy-blue/90 tabular-nums">
+        {value} <span className="text-[10px] text-icy-blue/50">{unit}</span>
+      </span>
+      <svg viewBox="0 0 48 16" className="w-full h-4" aria-hidden>
+        <polyline fill="none" stroke="#67e8f9" strokeWidth="1.2" points={pts} />
+      </svg>
+    </div>
   );
 }

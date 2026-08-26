@@ -13,7 +13,7 @@ export interface GridCell {
   zone: 'near' | 'mid' | 'far';
   cell_size: number;
   height: number; height_std: number; point_count: number;
-  terrain: 'ground' | 'rough' | 'obstacle';
+  terrain: 'ground' | 'rough' | 'obstacle' | 'depression';
   drivable: boolean;
   reason: string;
   color: string; // hex ready to paint

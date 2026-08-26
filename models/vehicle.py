@@ -7,7 +7,7 @@ from typing import Dict
 # Predefined vehicle profiles
 # ---------------------------------------------------------------------------
 # ground_clearance : max obstacle height (m) the vehicle can drive over
-# wheel_radius     : used for slope/step tolerance (m)
+# wheel_radius     : max pothole depth ≈ radius * 0.5 (m)
 # width            : total vehicle width — used for footprint drivability (m)
 # max_roughness    : max height_std the vehicle can tolerate on rough ground
 # ---------------------------------------------------------------------------

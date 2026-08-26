@@ -19,7 +19,7 @@ export type VehiclesResponse = Record<VehicleType, VehicleProfile>;
 // ─── Grid cell ────────────────────────────────────────────────────────────────
 
 export type Zone    = 'near' | 'mid' | 'far';
-export type Terrain = 'ground' | 'rough' | 'obstacle';
+export type Terrain = 'ground' | 'rough' | 'obstacle' | 'depression';
 
 /**
  * Reason codes returned by the drivability engine.
@@ -31,7 +31,9 @@ export type DrivabilityReason =
   | 'obstacle'                   // cell itself is an obstacle
   | 'obstacle_nearby'            // obstacle within vehicle width/2 footprint
   | 'too_rough'                  // roughness exceeds vehicle limit
-  | 'height_exceeds_clearance';  // ground step too high for vehicle
+  | 'height_exceeds_clearance'  // ground step too high for vehicle
+  | 'pothole'                    // below-grade hole deeper than wheel radius allows
+  | 'pothole_ok';                // shallow dip, still drivable
 
 export interface GridCell {
   x:           number;   // cell centre X (metres, forward)
@@ -44,7 +46,7 @@ export interface GridCell {
   terrain:     Terrain;
   drivable:    boolean;
   reason:      DrivabilityReason;
-  color:       string;   // "#00c853" | "#ffd600" | "#ff6d00" | "#d50000"
+  color:       string;   // icy HUD hex; canvas remaps by `reason`
 }
 
 // ─── Stats ────────────────────────────────────────────────────────────────────

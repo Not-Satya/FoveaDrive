@@ -6,21 +6,25 @@ from config import TERRAIN_CONFIG
 
 def classify_terrain(grid_data: List[Dict]) -> List[Dict]:
     """
-    Classify each grid cell as 'ground', 'obstacle', or 'rough'.
+    Classify each grid cell as 'depression', 'obstacle', 'rough', or 'ground'.
 
     Rules (applied in order):
-      1. height > height_threshold      →  obstacle
-      2. height_std > roughness_threshold →  rough (drivable for some vehicles)
-      3. Otherwise                       →  ground
+      1. height < depression_threshold  →  depression (pothole / below grade)
+      2. height > height_threshold      →  obstacle
+      3. height_std > roughness_threshold →  rough
+      4. Otherwise                       →  ground
     """
     h_thresh = TERRAIN_CONFIG["height_threshold"]
     r_thresh = TERRAIN_CONFIG["roughness_threshold"]
+    d_thresh = TERRAIN_CONFIG["depression_threshold"]
 
     for cell in grid_data:
         h   = cell["height"]
         std = cell["height_std"]
 
-        if h > h_thresh:
+        if h < d_thresh:
+            cell["terrain"] = "depression"
+        elif h > h_thresh:
             cell["terrain"] = "obstacle"
         elif std > r_thresh:
             cell["terrain"] = "rough"

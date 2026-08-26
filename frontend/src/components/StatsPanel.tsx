@@ -10,10 +10,10 @@ interface Props {
 }
 
 const LEGEND = [
-  { color: '#00c853', label: 'Drivable'               },
-  { color: '#ffd600', label: 'Rough (passable)'        },
-  { color: '#ff6d00', label: 'Obstacle in footprint'   },
-  { color: '#d50000', label: 'Non-drivable'            },
+  { color: '#28C8FF', label: 'Pothole (below grade)'  },
+  { color: '#10287D', label: 'Grade / drivable'        },
+  { color: '#3D7AD6', label: 'Shallow dip'             },
+  { color: '#FF50D6', label: 'Obstacle (above grade)'  },
 ];
 
 export function StatsPanel({ stats, vehicle }: Props) {

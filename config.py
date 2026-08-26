@@ -11,4 +11,6 @@ TERRAIN_CONFIG = {
     "height_threshold": 0.5,   # metres
     # A cell with height std above this is "rough" (slope-like)
     "roughness_threshold": 0.15,
+    # Mean Z below this (negative) is a depression / pothole
+    "depression_threshold": -0.08,
 }

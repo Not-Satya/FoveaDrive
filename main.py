@@ -29,6 +29,12 @@ def _get_base_grid() -> list[dict]:
     return copy.deepcopy(_BASE_GRID)
 
 
+def invalidate_base_grid() -> None:
+    global _POINTS, _BASE_GRID
+    _POINTS = None
+    _BASE_GRID = None
+
+
 def run_pipeline(vehicle_type: str = "sedan") -> list[dict]:
     """
     Full pipeline using a predefined vehicle profile (sedan / suv / truck).
