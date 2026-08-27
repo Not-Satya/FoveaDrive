@@ -2,8 +2,20 @@ import { useState } from "react";
 import { useHUDState } from "../hooks/useHUDState";
 import { VehicleProfile } from "../types";
 
-export function ControlPanel(props: ReturnType<typeof useHUDState>) {
-  const { activeProfile, kinematicParams, telemetry, handleProfileChange, handleParamChange } = props;
+export function ControlPanel(
+  props: ReturnType<typeof useHUDState> & {
+    collapsed?: boolean;
+    onToggleCollapse?: () => void;
+  },
+) {
+  const {
+    activeProfile, kinematicParams, telemetry,
+    handleProfileChange, handleParamChange,
+    frames, frameId, datasetCurrent, handleFrameChange, cycleFrame,
+    playing, togglePlayback,
+    collapsed = false,
+    onToggleCollapse,
+  } = props;
   const [calibrationState, setCalibrationState] = useState<"idle" | "processing" | "complete">("idle");
 
   const handleRecalibrate = () => {
@@ -19,8 +31,88 @@ export function ControlPanel(props: ReturnType<typeof useHUDState>) {
 
   const profiles: VehicleProfile[] = ['SEDAN', 'SUV', 'TRUCK'];
 
+  if (collapsed) {
+    return (
+      <div className="flex justify-center gap-2 pb-3">
+        <button
+          type="button"
+          onClick={togglePlayback}
+          className={`px-4 py-2 border backdrop-blur-md uppercase tracking-[0.2em] text-[10px] shadow-2xl ${
+            playing
+              ? 'border-emerald-400/70 bg-emerald-500/15 text-emerald-300'
+              : 'border-[#2B4C6F]/70 bg-[#060B14]/85 text-icy-blue/70 hover:text-icy-blue hover:border-[#E879F9]/50'
+          }`}
+        >
+          {playing ? '■ PAUSE STREAM' : '▶ PLAY STREAM'}
+        </button>
+        <button
+          type="button"
+          onClick={onToggleCollapse}
+          className="px-4 py-2 border border-[#2B4C6F]/70 bg-[#060B14]/85 backdrop-blur-md text-icy-blue/70 hover:text-icy-blue hover:border-[#E879F9]/50 uppercase tracking-[0.2em] text-[10px] shadow-2xl"
+        >
+          ▴ SHOW CONTROLS
+        </button>
+      </div>
+    );
+  }
+
   return (
     <section className="bg-[#060B14]/80 backdrop-blur-md p-4 rounded-xl border border-[#2B4C6F]/30 shadow-2xl">
+      <div className="mb-3 flex items-center justify-end">
+        <button
+          type="button"
+          onClick={onToggleCollapse}
+          className="px-3 py-1 border border-[#2B4C6F]/50 text-icy-blue/55 hover:text-icy-blue hover:border-[#E879F9]/40 uppercase tracking-[0.2em] text-[10px]"
+        >
+          ▾ COLLAPSE PANEL
+        </button>
+      </div>
+      <div className="mb-3 flex flex-wrap items-center gap-3 icy-glass rounded-lg px-4 py-2">
+        <span className="text-[10px] text-icy-blue/50 uppercase tracking-widest shrink-0">LiDAR stream</span>
+        <button
+          type="button"
+          onClick={() => cycleFrame(-1)}
+          className="px-2 py-1 border border-[#2B4C6F]/60 text-icy-blue/70 hover:text-icy-blue hover:border-[#E879F9]/50 text-[10px]"
+        >
+          ◀
+        </button>
+        <select
+          value={frameId}
+          onChange={(e) => handleFrameChange(e.target.value)}
+          className="min-w-[12rem] flex-1 max-w-md bg-[#060B14] border border-[#2B4C6F]/60 text-icy-blue text-[10px] font-mono tracking-wider px-2 py-1.5 outline-none"
+        >
+          {frames.map((f) => (
+            <option key={f.id} value={f.id}>
+              {f.id === 'synthetic'
+                ? 'SYNTHETIC'
+                : `${f.id.replace('frame_', '')}  seq${f.sequence ?? '--'}  ${f.category}`}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          onClick={() => cycleFrame(1)}
+          className="px-2 py-1 border border-[#2B4C6F]/60 text-icy-blue/70 hover:text-icy-blue hover:border-[#E879F9]/50 text-[10px]"
+        >
+          ▶
+        </button>
+        <button
+          type="button"
+          onClick={togglePlayback}
+          className={`px-3 py-1.5 border uppercase tracking-widest text-[10px] ${
+            playing
+              ? 'border-emerald-400/70 bg-emerald-500/15 text-emerald-300'
+              : 'border-[#2B4C6F]/60 text-icy-blue/70 hover:text-icy-blue hover:border-[#E879F9]/50'
+          }`}
+        >
+          {playing ? '■ PAUSE' : '▶ PLAY'}
+        </button>
+        <span className="text-[10px] text-icy-blue/45 font-mono tracking-wider truncate">
+          {datasetCurrent?.source === 'kitti'
+            ? `diff ${datasetCurrent.difficulty ?? '—'} · ${datasetCurrent.special ? 'special' : 'urban/rest'}`
+            : 'generated cloud'}
+        </span>
+      </div>
       <div className="grid grid-cols-4 gap-4 h-full">
         {/* CARD 1: Profile Selection */}
         <div className="icy-glass rounded-lg p-4 flex flex-col">
@@ -100,11 +192,13 @@ export function ControlPanel(props: ReturnType<typeof useHUDState>) {
           <div className="text-[10px] text-icy-blue/50 mb-4 uppercase">System Telemetry</div>
           <div className="flex flex-col gap-4 flex-1 justify-center">
             <div className="flex flex-col">
-              <span className="text-[9px] text-icy-blue/40 uppercase">FPS Rate</span>
-              <span className="text-lg text-emerald-400 tabular-nums">{telemetry.fpsRate.toFixed(1)} <span className="text-[10px] text-emerald-400/70">Hz</span></span>
+              <span className="text-[9px] text-icy-blue/40 uppercase">Map rate</span>
+              <span className={`text-lg tabular-nums ${playing ? 'text-emerald-400' : 'text-icy-blue/70'}`}>
+                {playing ? telemetry.mapHz.toFixed(1) : '—'} <span className="text-[10px] text-emerald-400/70">Hz</span>
+              </span>
             </div>
             <div className="flex flex-col">
-              <span className="text-[9px] text-icy-blue/40 uppercase">Hardware Bus Status</span>
+              <span className="text-[9px] text-icy-blue/40 uppercase">Classifier</span>
               <span className="text-sm text-emerald-400">{telemetry.busStatus}</span>
             </div>
             <div className="flex flex-col">

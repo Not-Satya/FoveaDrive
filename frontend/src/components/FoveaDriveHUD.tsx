@@ -1,6 +1,6 @@
 // frontend/src/components/FoveaDriveHUD.tsx
 
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { Header }          from "./Header";
 import { ViewportHUD }     from "./ViewportHUD";
 import { ControlPanel }    from "./ControlPanel";
@@ -20,12 +20,12 @@ export function FoveaDriveHUD() {
     speed,
   } = hudState;
 
+  const [panelCollapsed, setPanelCollapsed] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   return (
     <div className="text-icy-blue selection:bg-white/20 text-xs bg-background h-screen w-screen overflow-hidden font-mono relative">
 
-      {/* ── Fixed Background Viewport (the big dark map area) ─────────────── */}
       <div className="fixed inset-0 z-0 h-screen w-screen">
         <ViewportHUD
           terrainStatus={terrainStatus}
@@ -33,33 +33,40 @@ export function FoveaDriveHUD() {
           mappingMode={mappingMode}
           toggleMappingMode={toggleMappingMode}
           cells={cells}
-          loading={mapLoading}
+          loading={mapLoading && !hudState.playing}
+          playing={hudState.playing}
           heading={359.7}
           elevation={telemetry.incline}
         />
       </div>
 
-      {/* ── Scrollable overlay (header + control panel + footer) ──────────── */}
+      {/* pointer-events-none so drag-orbit on the map works through the chrome */}
       <div
         ref={scrollRef}
-        className="relative z-10 h-full flex flex-col overflow-y-auto scrollbar-hide"
+        className="relative z-10 h-full flex flex-col overflow-y-auto scrollbar-hide pointer-events-none"
       >
         <CustomScrollbar scrollContainerRef={scrollRef} />
 
-        {/* Header */}
-        <Header
-          lat={telemetry.lat}
-          lng={telemetry.lng}
-          terrainStatus={terrainStatus}
-        />
+        <div className="pointer-events-auto">
+          <Header
+            lat={telemetry.lat}
+            lng={telemetry.lng}
+            terrainStatus={terrainStatus}
+            streamLabel={hudState.telemetry.inputStream}
+            live={hudState.playing}
+          />
+        </div>
 
-        {/* Spacer — lets the map show through */}
-        <div className="flex-1 pointer-events-none" />
+        <div className="flex-1" />
 
-        {/* Control panel (pinned to bottom) */}
-        <ControlPanel {...hudState} />
-
-        <Footer />
+        <div className="pointer-events-auto">
+          <ControlPanel
+            {...hudState}
+            collapsed={panelCollapsed}
+            onToggleCollapse={() => setPanelCollapsed(v => !v)}
+          />
+          {!panelCollapsed && <Footer />}
+        </div>
       </div>
 
     </div>

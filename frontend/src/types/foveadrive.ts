@@ -47,6 +47,9 @@ export interface GridCell {
   drivable:    boolean;
   reason:      DrivabilityReason;
   color:       string;   // icy HUD hex; canvas remaps by `reason`
+  semantic?:      number;
+  semantic_name?: string;
+  obstacle_frac?: number;
 }
 
 // ─── Stats ────────────────────────────────────────────────────────────────────

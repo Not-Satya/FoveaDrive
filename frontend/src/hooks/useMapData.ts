@@ -15,7 +15,7 @@ interface UseMapDataResult {
   refresh:   () => void;
 }
 
-export function useMapData(vehicle: VehicleType): UseMapDataResult {
+export function useMapData(vehicle: VehicleType, frame?: string): UseMapDataResult {
   const [cells,   setCells]   = useState<GridCell[]>([]);
   const [stats,   setStats]   = useState<MapStats | null>(null);
   const [loading, setLoading] = useState(false);
@@ -27,8 +27,8 @@ export function useMapData(vehicle: VehicleType): UseMapDataResult {
     try {
       // Fetch map + stats in parallel
       const [mapData, statsData] = await Promise.all([
-        fetchMap(vehicle),
-        fetchMapStats(vehicle),
+        fetchMap(vehicle, frame),
+        fetchMapStats(vehicle, frame),
       ]);
       setCells(mapData);
       setStats(statsData);
@@ -37,7 +37,7 @@ export function useMapData(vehicle: VehicleType): UseMapDataResult {
     } finally {
       setLoading(false);
     }
-  }, [vehicle]);
+  }, [vehicle, frame]);
 
   useEffect(() => { load(); }, [load]);
 

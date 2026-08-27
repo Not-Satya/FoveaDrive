@@ -2,14 +2,27 @@
 //
 // 3/4 isometric 2.5D occupancy grid — neon heat ramp, voxel gaps, radar ring.
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type PointerEvent } from 'react';
 import type { GridCell } from '../api/foveadriveApi';
+import type { MappingMode } from '../types';
 
 interface MapCanvasProps {
   cells: GridCell[];
   loading?: boolean;
+  mappingMode?: MappingMode;
   className?: string;
+  onViewChange?: (yaw: number, pitch: number) => void;
 }
+
+const WORLD_RANGE = 42;
+const DEFAULT_YAW = Math.PI / 5;
+const DEFAULT_PITCH = 0.58;
+const DEFAULT_ZOOM = 1;
+const PITCH_MIN = 0.22;
+const PITCH_MAX = 0.92;
+const ZOOM_MIN = 0.4;
+const ZOOM_MAX = 5;
+const VOXEL_INSET = 0.10;
 
 type Kind = 'clear' | 'rough' | 'nearby' | 'blocked' | 'pothole';
 type RGB = [number, number, number];
@@ -23,13 +36,6 @@ type Faces = {
   stroke: string;
   glow: string;
 };
-
-const WORLD_RANGE = 34;
-const YAW = Math.PI / 5;
-const COS = Math.cos(YAW);
-const SIN = Math.sin(YAW);
-const PITCH = 0.58;
-const VOXEL_INSET = 0.10;
 
 const GRADE = 0.08;       // nominal road surface (m)
 const DEPTH_MAX = 0.75;   // deepest pothole in the colour scale (m)
@@ -103,6 +109,51 @@ function mix(a: RGB, b: RGB, t: number): RGB {
   return [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
 }
 
+const SEMANTIC_RGB: Record<string, RGB> = {
+  road: [20, 50, 130],
+  'lane-marking': [48, 88, 175],
+  parking: [28, 62, 120],
+  sidewalk: [70, 100, 150],
+  'other-ground': [44, 78, 118],
+  terrain: [24, 110, 120],
+  car: [255, 80, 214],
+  'moving-car': [255, 80, 214],
+  truck: [232, 90, 160],
+  'moving-truck': [232, 90, 160],
+  bus: [220, 70, 140],
+  'moving-bus': [220, 70, 140],
+  'other-vehicle': [240, 100, 180],
+  'moving-other-vehicle': [240, 100, 180],
+  bicycle: [120, 200, 255],
+  motorcycle: [100, 180, 255],
+  person: [80, 220, 255],
+  'moving-person': [80, 220, 255],
+  bicyclist: [100, 210, 255],
+  motorcyclist: [90, 190, 255],
+  building: [96, 42, 165],
+  fence: [140, 80, 190],
+  'other-structure': [110, 60, 170],
+  vegetation: [20, 150, 155],
+  trunk: [36, 100, 90],
+  pole: [190, 170, 230],
+  'traffic-sign': [255, 180, 80],
+  'other-object': [170, 90, 150],
+  unlabeled: [50, 70, 105],
+  outlier: [40, 50, 70],
+};
+
+function facesFromRgb(rgb: RGB, fade: number, glowMix = 0): Faces {
+  const a = (n: number) => n * fade;
+  return {
+    top:    rgba(rgb, a(0.72)),
+    left:   rgba(shade(rgb, 0.42), a(0.70)),
+    right:  rgba(shade(rgb, 0.22), a(0.78)),
+    front:  rgba(shade(rgb, 0.32), a(0.74)),
+    stroke: rgba(mix(rgb, [200, 230, 255], 0.2), a(0.28)),
+    glow:   rgba(mix(rgb, [255, 180, 240], glowMix), a(0.45 + glowMix * 0.4)),
+  };
+}
+
 function facesFor(t: number, fade: number): Faces {
   const rgb = sampleHeat(t);
   const a = (n: number) => n * fade;
@@ -122,11 +173,11 @@ function facesFor(t: number, fade: number): Faces {
 }
 
 function slab(cell: GridCell, kind: Kind): { z0: number; z1: number } {
-  if (kind === 'pothole' || cell.height < -0.04) {
-    return { z0: Math.min(cell.height, -0.06), z1: 0 };
+  if (kind === 'pothole') {
+    return { z0: Math.max(Math.min(cell.height, -0.06), -1.2), z1: 0 };
   }
   if (kind === 'blocked') {
-    return { z0: 0, z1: Math.max(0.25, Math.min(cell.height * 1.05, 4.5)) };
+    return { z0: 0, z1: Math.max(0.25, Math.min(Math.max(cell.height, 0.3) * 1.05, 4.5)) };
   }
   if (kind === 'rough') {
     return { z0: 0, z1: 0.06 + Math.min(cell.height_std, 0.28) };
@@ -143,7 +194,15 @@ function fogFor(dist: number, t: number): number {
   return extreme ? Math.max(fog, 0.78) : fog;
 }
 
-function renderMap(canvas: HTMLCanvasElement, cells: GridCell[], loading: boolean) {
+function renderMap(
+  canvas: HTMLCanvasElement,
+  cells: GridCell[],
+  loading: boolean,
+  mappingMode: MappingMode = 'DRIVABILITY_MAP',
+  yaw = DEFAULT_YAW,
+  pitch = DEFAULT_PITCH,
+  zoom = DEFAULT_ZOOM,
+) {
   const parent = canvas.parentElement;
   const cssW = parent?.clientWidth  || canvas.clientWidth  || 1;
   const cssH = parent?.clientHeight || canvas.clientHeight || 1;
@@ -161,19 +220,21 @@ function renderMap(canvas: HTMLCanvasElement, cells: GridCell[], loading: boolea
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, cssW, cssH);
 
+  const cos = Math.cos(yaw);
+  const sin = Math.sin(yaw);
   const ox = cssW / 2;
   const oy = cssH * 0.58;
-  const extent = WORLD_RANGE * (Math.abs(COS) + Math.abs(SIN));
-  const scale = Math.min(cssW / (extent * 2.2), cssH / (extent * 2.2 * PITCH));
+  const extent = WORLD_RANGE * (Math.abs(cos) + Math.abs(sin));
+  const scale = Math.min(cssW / (extent * 2.2), cssH / (extent * 2.2 * pitch)) * zoom;
   const heightPx = scale * 1.35;
 
   const project = (x: number, y: number, z: number): Pt => {
-    const rx = COS * y - SIN * x;
-    const ry = SIN * y + COS * x;
+    const rx = cos * y - sin * x;
+    const ry = sin * y + cos * x;
     return {
       x: ox + rx * scale,
-      y: oy - ry * scale * PITCH - z * heightPx,
-      d: COS * x + SIN * y,
+      y: oy - ry * scale * pitch - z * heightPx,
+      d: cos * x + sin * y,
     };
   };
 
@@ -251,17 +312,21 @@ function renderMap(canvas: HTMLCanvasElement, cells: GridCell[], loading: boolea
   const visible = cells
     .map((c, i) => ({ c, i }))
     .filter(({ c }) => Math.abs(c.x) <= WORLD_RANGE + 2 && Math.abs(c.y) <= WORLD_RANGE + 2)
-    .sort((a, b) => (COS * b.c.x + SIN * b.c.y) - (COS * a.c.x + SIN * a.c.y));
-
-  let axisCell: GridCell | null = null;
-  let axisH = 0;
-  let holeCell: GridCell | null = null;
-  let holeD = 0;
+    .sort((a, b) => (cos * b.c.x + sin * b.c.y) - (cos * a.c.x + sin * a.c.y));
 
   for (const { c: cell } of visible) {
     const kind = kindOf(cell);
     const t = elevT(cell.height);
-    const pal = facesFor(t, fogFor(Math.hypot(cell.x, cell.y), t));
+    const fade = fogFor(Math.hypot(cell.x, cell.y), t);
+    const pal = (
+      mappingMode === 'RAW_POINT_CLOUD' && cell.semantic_name
+        ? facesFromRgb(
+            SEMANTIC_RGB[cell.semantic_name] || SEMANTIC_RGB.unlabeled,
+            fade,
+            cell.semantic_name.includes('car') || cell.semantic_name === 'person' ? 0.55 : 0,
+          )
+        : facesFor(t, fade)
+    );
     const { z0, z1 } = slab(cell, kind);
     const inset = cell.cell_size * VOXEL_INSET;
     const half = cell.cell_size / 2 - inset / 2;
@@ -271,20 +336,11 @@ function renderMap(canvas: HTMLCanvasElement, cells: GridCell[], loading: boolea
     const y1 = cell.y + half;
     const p = (x: number, y: number, z: number) => project(x, y, z);
 
-    if (kind === 'blocked' && z1 > axisH) {
-      axisCell = cell;
-      axisH = z1;
-    }
-    if (kind === 'pothole' && -z0 > holeD) {
-      holeCell = cell;
-      holeD = -z0;
-    }
-
     if (Math.abs(z1 - z0) > 0.04) {
-      quad([p(x1, y0, z0), p(x1, y1, z0), p(x1, y1, z1), p(x1, y0, z1)], pal.right);
-      quad([p(x0, y1, z0), p(x1, y1, z0), p(x1, y1, z1), p(x0, y1, z1)], pal.left);
-      quad([p(x0, y0, z0), p(x1, y0, z0), p(x1, y0, z1), p(x0, y0, z1)], pal.right);
-      quad([p(x0, y0, z0), p(x0, y1, z0), p(x0, y1, z1), p(x0, y0, z1)], pal.front);
+      if (cos >= 0) quad([p(x1, y0, z0), p(x1, y1, z0), p(x1, y1, z1), p(x1, y0, z1)], pal.right);
+      else          quad([p(x0, y0, z0), p(x0, y1, z0), p(x0, y1, z1), p(x0, y0, z1)], pal.front);
+      if (sin >= 0) quad([p(x0, y1, z0), p(x1, y1, z0), p(x1, y1, z1), p(x0, y1, z1)], pal.left);
+      else          quad([p(x0, y0, z0), p(x1, y0, z0), p(x1, y0, z1), p(x0, y0, z1)], pal.right);
     }
 
     const faceZ = kind === 'pothole' ? z0 : z1;
@@ -329,50 +385,6 @@ function renderMap(canvas: HTMLCanvasElement, cells: GridCell[], loading: boolea
     }
   }
 
-  const callout = (
-    worldX: number,
-    worldY: number,
-    z: number,
-    label: string,
-    color: string,
-  ) => {
-    const p = project(worldX, worldY, z);
-    const x2 = p.x + 22;
-    ctx.save();
-    ctx.strokeStyle = color;
-    ctx.fillStyle = color;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(p.x, p.y);
-    ctx.lineTo(x2, p.y);
-    ctx.stroke();
-    ctx.font = '10px "Space Mono", monospace';
-    ctx.textBaseline = 'middle';
-    ctx.textAlign = 'left';
-    ctx.fillText(label, x2 + 5, p.y);
-    ctx.restore();
-  };
-
-  if (axisCell && axisH > 0.8) {
-    callout(
-      axisCell.x,
-      axisCell.y + axisCell.cell_size * 0.7,
-      axisH,
-      `${axisH.toFixed(1)} m`,
-      'rgba(188,227,255,0.7)',
-    );
-  }
-
-  if (holeCell && holeD > 0.12) {
-    callout(
-      holeCell.x,
-      holeCell.y - holeCell.cell_size * 0.7,
-      -holeD,
-      `−${holeD.toFixed(2)} m`,
-      'rgba(80,200,255,0.75)',
-    );
-  }
-
   const vz = 0.35;
   const nose = project(1.15, 0, vz);
   const port = project(-0.55, -0.55, 0);
@@ -407,34 +419,158 @@ function renderMap(canvas: HTMLCanvasElement, cells: GridCell[], loading: boolea
   }
 }
 
-export function MapCanvas({ cells, loading = false, className = '' }: MapCanvasProps) {
+export function MapCanvas({
+  cells,
+  loading = false,
+  mappingMode = 'RAW_POINT_CLOUD',
+  className = '',
+  onViewChange,
+}: MapCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const cellsRef = useRef(cells);
   const loadingRef = useRef(loading);
+  const modeRef = useRef(mappingMode);
+  const yawRef = useRef(DEFAULT_YAW);
+  const pitchRef = useRef(DEFAULT_PITCH);
+  const zoomRef = useRef(DEFAULT_ZOOM);
+  const dragRef = useRef<{ x: number; y: number } | null>(null);
+  const rafRef = useRef(0);
+  const viewCbRef = useRef(onViewChange);
   cellsRef.current = cells;
   loadingRef.current = loading;
+  modeRef.current = mappingMode;
+  viewCbRef.current = onViewChange;
+
+  const draw = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    renderMap(
+      canvas,
+      cellsRef.current,
+      loadingRef.current,
+      modeRef.current,
+      yawRef.current,
+      pitchRef.current,
+      zoomRef.current,
+    );
+  };
+
+  const scheduleDraw = () => {
+    if (rafRef.current) return;
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = 0;
+      draw();
+      viewCbRef.current?.(yawRef.current, pitchRef.current);
+    });
+  };
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-
-    const draw = () => renderMap(canvas, cellsRef.current, loadingRef.current);
     const ro = new ResizeObserver(draw);
     ro.observe(canvas.parentElement ?? canvas);
     draw();
-    return () => ro.disconnect();
+    return () => {
+      ro.disconnect();
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
   }, []);
 
   useEffect(() => {
+    draw();
+  }, [cells, loading, mappingMode]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+      const step = e.shiftKey ? 0.12 : 0.06;
+      if (e.key === 'ArrowLeft')  { yawRef.current -= step; scheduleDraw(); e.preventDefault(); }
+      if (e.key === 'ArrowRight') { yawRef.current += step; scheduleDraw(); e.preventDefault(); }
+      if (e.key === 'ArrowUp')    { pitchRef.current = Math.min(PITCH_MAX, pitchRef.current + step * 0.6); scheduleDraw(); e.preventDefault(); }
+      if (e.key === 'ArrowDown')  { pitchRef.current = Math.max(PITCH_MIN, pitchRef.current - step * 0.6); scheduleDraw(); e.preventDefault(); }
+      if (e.key === '=' || e.key === '+') {
+        zoomRef.current = Math.min(ZOOM_MAX, zoomRef.current * 1.12);
+        scheduleDraw();
+        e.preventDefault();
+      }
+      if (e.key === '-' || e.key === '_') {
+        zoomRef.current = Math.max(ZOOM_MIN, zoomRef.current / 1.12);
+        scheduleDraw();
+        e.preventDefault();
+      }
+      if (e.key === 'Home' || e.key === 'r' || e.key === 'R') {
+        yawRef.current = DEFAULT_YAW;
+        pitchRef.current = DEFAULT_PITCH;
+        zoomRef.current = DEFAULT_ZOOM;
+        draw();
+        viewCbRef.current?.(yawRef.current, pitchRef.current);
+        e.preventDefault();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const onPointerDown = (e: PointerEvent<HTMLCanvasElement>) => {
+    if (e.button !== 0) return;
+    dragRef.current = { x: e.clientX, y: e.clientY };
+    e.currentTarget.setPointerCapture(e.pointerId);
+    e.currentTarget.style.cursor = 'grabbing';
+  };
+
+  const onPointerMove = (e: PointerEvent<HTMLCanvasElement>) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    const dx = e.clientX - drag.x;
+    const dy = e.clientY - drag.y;
+    drag.x = e.clientX;
+    drag.y = e.clientY;
+    yawRef.current += dx * 0.0075;
+    pitchRef.current = Math.max(PITCH_MIN, Math.min(PITCH_MAX, pitchRef.current - dy * 0.004));
+    scheduleDraw();
+  };
+
+  const endDrag = (e: PointerEvent<HTMLCanvasElement>) => {
+    if (!dragRef.current) return;
+    dragRef.current = null;
+    e.currentTarget.style.cursor = 'grab';
+    viewCbRef.current?.(yawRef.current, pitchRef.current);
+  };
+
+  const onDoubleClick = () => {
+    yawRef.current = DEFAULT_YAW;
+    pitchRef.current = DEFAULT_PITCH;
+    zoomRef.current = DEFAULT_ZOOM;
+    draw();
+    viewCbRef.current?.(yawRef.current, pitchRef.current);
+  };
+
+  useEffect(() => {
     const canvas = canvasRef.current;
-    if (canvas) renderMap(canvas, cells, loading);
-  }, [cells, loading]);
+    if (!canvas) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const delta = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+      const factor = Math.exp(-delta * 0.00135);
+      zoomRef.current = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zoomRef.current * factor));
+      scheduleDraw();
+    };
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+    return () => canvas.removeEventListener('wheel', onWheel);
+  }, []);
 
   return (
     <canvas
       ref={canvasRef}
       className={className}
-      style={{ width: '100%', height: '100%', display: 'block' }}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
+      onDoubleClick={onDoubleClick}
+      style={{ width: '100%', height: '100%', display: 'block', cursor: 'grab', touchAction: 'none' }}
     />
   );
 }

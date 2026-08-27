@@ -1,5 +1,6 @@
 // frontend/src/components/ViewportHUD.tsx
 
+import { useState } from 'react';
 import { MappingMode } from '../types';
 import { MapCanvas } from './MapCanvas';
 import type { GridCell } from '../api/foveadriveApi';
@@ -13,6 +14,7 @@ interface ViewportHUDProps {
   loading:           boolean;
   heading?:          number;
   elevation?:        number;
+  playing?:          boolean;
 }
 
 const HEAT_GRADIENT =
@@ -27,9 +29,12 @@ export function ViewportHUD({
   loading,
   heading = 359.7,
   elevation = 2.4,
+  playing = false,
 }: ViewportHUDProps) {
   const isHazardous = terrainStatus === 'HAZARDOUS / UNTRAVERSABLE';
   const isCaution = terrainStatus.includes('CAUTION');
+  const [viewYaw, setViewYaw] = useState(Math.PI / 5);
+  const viewDeg = ((viewYaw * 180) / Math.PI % 360 + 360) % 360;
 
   return (
     <section
@@ -40,7 +45,12 @@ export function ViewportHUD({
       <div className="scanline pointer-events-none z-30" />
 
       <div className="absolute inset-0 z-10">
-        <MapCanvas cells={cells} loading={loading} />
+        <MapCanvas
+          cells={cells}
+          loading={loading}
+          mappingMode={mappingMode}
+          onViewChange={(yaw) => setViewYaw(yaw)}
+        />
       </div>
 
       {/* ── Left HUD: speed, terrain analysis, legend ────────────────────── */}
@@ -64,16 +74,30 @@ export function ViewportHUD({
         </div>
 
         <div className="flex flex-col gap-1.5 text-[9px] font-mono tracking-widest uppercase text-icy-blue/50">
-          <div className="text-[8px] text-icy-blue/35">Visual legend — signed height</div>
-          <div className="flex items-center gap-2">
-            <span>Pothole</span>
-            <span
-              className="h-1.5 w-[5.5rem] shrink-0 border border-[#2B4C6F]/60"
-              style={{ background: HEAT_GRADIENT }}
-            />
-            <span>Obstacle</span>
-          </div>
-          <div className="text-[8px] text-icy-blue/35 tracking-wider">← below grade &nbsp; navy = 0 m &nbsp; above →</div>
+          {mappingMode === 'RAW_POINT_CLOUD' ? (
+            <>
+              <div className="text-[8px] text-icy-blue/35">Visual legend — GT overlay (not inferred)</div>
+              <div className="flex flex-wrap gap-x-3 gap-y-1">
+                <span className="inline-flex items-center gap-1"><span className="inline-block w-2 h-2" style={{ background: 'rgb(20,50,130)' }} />Road</span>
+                <span className="inline-flex items-center gap-1"><span className="inline-block w-2 h-2" style={{ background: 'rgb(255,80,214)' }} />Vehicle</span>
+                <span className="inline-flex items-center gap-1"><span className="inline-block w-2 h-2" style={{ background: 'rgb(90,40,160)' }} />Building</span>
+                <span className="inline-flex items-center gap-1"><span className="inline-block w-2 h-2" style={{ background: 'rgb(20,140,150)' }} />Veg</span>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="text-[8px] text-icy-blue/35">Visual legend — signed height</div>
+              <div className="flex items-center gap-2">
+                <span>Pothole</span>
+                <span
+                  className="h-1.5 w-[5.5rem] shrink-0 border border-[#2B4C6F]/60"
+                  style={{ background: HEAT_GRADIENT }}
+                />
+                <span>Obstacle</span>
+              </div>
+              <div className="text-[8px] text-icy-blue/35 tracking-wider">← below grade &nbsp; navy = 0 m &nbsp; above →</div>
+            </>
+          )}
           <div className="flex items-center gap-2">
             <span className="size-3 shrink-0 border border-icy-blue/50 flex items-center justify-center">
               <span className="size-1.5 bg-icy-blue/80" />
@@ -89,27 +113,37 @@ export function ViewportHUD({
           onClick={toggleMappingMode}
           className="text-[10px] font-mono tracking-widest uppercase px-3 py-1.5 border border-[#2B4C6F]/50 bg-[#060B14]/50 text-icy-blue/60 hover:text-icy-blue/90 hover:border-[#2B4C6F] transition-all backdrop-blur-sm"
         >
-          MODE: {mappingMode === 'RAW_POINT_CLOUD' ? 'RAW_POINT_CLOUD' : 'DRIVABILITY_MAP'}
+          MODE: {mappingMode === 'RAW_POINT_CLOUD' ? 'GT OVERLAY' : 'DRIVABILITY_MAP'}
         </button>
+        {playing && (
+          <div className="text-[9px] font-mono tracking-[0.2em] uppercase px-3 py-1 border border-emerald-400/50 bg-emerald-500/10 text-emerald-300">
+            DATASET PLAYBACK
+          </div>
+        )}
+        <div className="text-[8px] font-mono tracking-widest uppercase text-icy-blue/40 text-right pointer-events-none">
+          scroll to zoom · drag to orbit · dbl-click reset
+        </div>
 
         <div className="pointer-events-none w-[7.5rem] h-[7.5rem] relative">
           <svg viewBox="0 0 100 100" className="w-full h-full">
             <circle cx="50" cy="50" r="46" fill="rgba(6,11,20,0.45)" stroke="rgba(43,76,111,0.7)" strokeWidth="1" />
             <circle cx="50" cy="50" r="38" fill="none" stroke="rgba(188,227,255,0.18)" strokeWidth="0.6" />
-            {[0, 45, 90, 135, 180, 225, 270, 315].map((deg) => {
-              const a = ((deg - 90) * Math.PI) / 180;
-              const x1 = 50 + Math.cos(a) * 40;
-              const y1 = 50 + Math.sin(a) * 40;
-              const x2 = 50 + Math.cos(a) * 44;
-              const y2 = 50 + Math.sin(a) * 44;
-              return <line key={deg} x1={x1} y1={y1} x2={x2} y2={y2} stroke="rgba(188,227,255,0.45)" strokeWidth="1" />;
-            })}
-            <polygon points="50,12 47,28 50,24 53,28" fill="#BCE3FF" />
-            <text x="50" y="22" textAnchor="middle" fill="#BCE3FF" fontSize="6" fontFamily="Space Mono">N</text>
+            <g transform={`rotate(${-viewDeg} 50 50)`}>
+              {[0, 45, 90, 135, 180, 225, 270, 315].map((deg) => {
+                const a = ((deg - 90) * Math.PI) / 180;
+                const x1 = 50 + Math.cos(a) * 40;
+                const y1 = 50 + Math.sin(a) * 40;
+                const x2 = 50 + Math.cos(a) * 44;
+                const y2 = 50 + Math.sin(a) * 44;
+                return <line key={deg} x1={x1} y1={y1} x2={x2} y2={y2} stroke="rgba(188,227,255,0.45)" strokeWidth="1" />;
+              })}
+              <polygon points="50,12 47,28 50,24 53,28" fill="#BCE3FF" />
+              <text x="50" y="22" textAnchor="middle" fill="#BCE3FF" fontSize="6" fontFamily="Space Mono">N</text>
+            </g>
           </svg>
           <div className="absolute inset-0 flex flex-col items-center justify-center font-mono">
-            <div className="text-[11px] text-icy-blue tabular-nums tracking-wider">{heading.toFixed(1)}°</div>
-            <div className="text-[8px] text-icy-blue/50 uppercase tracking-widest">+{elevation.toFixed(1)} m</div>
+            <div className="text-[11px] text-icy-blue tabular-nums tracking-wider">{viewDeg.toFixed(1)}°</div>
+            <div className="text-[8px] text-icy-blue/50 uppercase tracking-widest">view yaw</div>
           </div>
         </div>
       </div>

@@ -13,6 +13,7 @@ export interface KinematicParams {
 
 export interface TelemetryData {
   fpsRate:     number;
+  mapHz:       number;
   busStatus:   string;
   inputStream: string;
   lat:         number;

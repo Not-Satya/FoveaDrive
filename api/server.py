@@ -10,7 +10,14 @@ import os
 # Make sure imports resolve from project root when running via uvicorn
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from main import run_pipeline, run_custom_pipeline, build_stats, invalidate_base_grid
+from main import (
+    run_pipeline,
+    run_custom_pipeline,
+    build_stats,
+    invalidate_base_grid,
+    set_active_frame,
+    get_dataset_info,
+)
 from models.vehicle import VEHICLE_PROFILES, get_vehicle
 
 # ---------------------------------------------------------------------------
@@ -45,6 +52,14 @@ def _get_cached(vehicle: str) -> List[Dict]:
     return _cache[vehicle]
 
 
+def _apply_frame(frame: Optional[str]) -> None:
+    """Switch the active LiDAR frame when the client asks; drop vehicle cache if it changed."""
+    if not frame:
+        return
+    if set_active_frame(frame):
+        _cache.clear()
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -70,13 +85,21 @@ def get_vehicle_profile(vehicle_type: str):
         raise HTTPException(status_code=404, detail=str(e))
 
 
+@app.get("/dataset")
+def get_dataset():
+    """Curated KITTI/SemanticKITTI catalog plus the frame currently loaded."""
+    return get_dataset_info()
+
+
 @app.get("/map")
 def get_map(
     vehicle: str = Query(default="sedan", description="sedan | suv | truck"),
+    frame: Optional[str] = Query(default=None, description="frame_000000 | synthetic"),
 ):
     """Full grid cells for a preset vehicle profile."""
     try:
         get_vehicle(vehicle)
+        _apply_frame(frame)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return _get_cached(vehicle)
@@ -85,10 +108,12 @@ def get_map(
 @app.get("/map/stats")
 def get_map_stats(
     vehicle: str = Query(default="sedan", description="sedan | suv | truck"),
+    frame: Optional[str] = Query(default=None, description="frame_000000 | synthetic"),
 ):
     """Summary statistics for a preset vehicle type."""
     try:
         get_vehicle(vehicle)
+        _apply_frame(frame)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return build_stats(_get_cached(vehicle), vehicle_label=vehicle)
@@ -100,6 +125,7 @@ def get_map_custom(
     width:            float          = Query(...,  description="Vehicle width in metres e.g. 1.8"),
     wheel_radius:     float          = Query(...,  description="Wheel radius in metres e.g. 0.32"),
     max_roughness:    Optional[float] = Query(None, description="Height-std tolerance (auto-derived if omitted)"),
+    frame:            Optional[str]  = Query(None, description="frame_000000 | synthetic"),
 ):
     """
     Run the pipeline with fully custom vehicle parameters — used by the
@@ -116,6 +142,11 @@ def get_map_custom(
         raise HTTPException(status_code=400, detail="width must be 0.5 – 5.0 m")
     if not (0.1  <= wheel_radius     <= 1.0):
         raise HTTPException(status_code=400, detail="wheel_radius must be 0.1 – 1.0 m")
+
+    try:
+        _apply_frame(frame)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     cells = run_custom_pipeline(
         ground_clearance=ground_clearance,

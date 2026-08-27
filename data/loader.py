@@ -1,11 +1,20 @@
 # backend/data/loader.py
 
-import numpy as np
+import json
 from pathlib import Path
+
+import numpy as np
+
+from data.semantics import ROAD_CLASSES
+
+
+DATASET_DIR = Path(__file__).parent / "lidar"
+_CATALOG: dict | None = None
+_COMPACT_FRAMES: list[dict] | None = None
 
 
 # ---------------------------------------------------------------------------
-# Synthetic data generator  (primary — no hardware needed)
+# Synthetic data generator  (fallback — no hardware needed)
 # ---------------------------------------------------------------------------
 
 def load_sample_points(num_points: int = 6000, seed: int = 42) -> np.ndarray:
@@ -20,18 +29,15 @@ def load_sample_points(num_points: int = 6000, seed: int = 42) -> np.ndarray:
     """
     rng = np.random.default_rng(seed)
 
-    # --- Ground (flat, low-Z noise) ---
     n_ground = int(num_points * 0.62)
     ground_xy = rng.uniform(-25, 25, (n_ground, 2))
     ground_z  = rng.uniform(0.0, 0.12, (n_ground, 1))
 
-    # --- Potholes: depress existing ground points so cell means go negative ---
     pothole_specs = [
-        # (centre_x, centre_y, radius_m, z_lo, z_hi)
-        (  7.5, -2.5, 1.4, -0.58, -0.32),  # near — too deep for sedan
-        (  3.0,  5.0, 0.9, -0.22, -0.10),  # near — shallow, sedan-ok
-        ( 16.0,  3.5, 1.6, -0.72, -0.40),  # mid — deep
-        ( 11.0, -7.0, 1.1, -0.38, -0.18),  # mid — medium
+        (  7.5, -2.5, 1.4, -0.58, -0.32),
+        (  3.0,  5.0, 0.9, -0.22, -0.10),
+        ( 16.0,  3.5, 1.6, -0.72, -0.40),
+        ( 11.0, -7.0, 1.1, -0.38, -0.18),
     ]
     for cx, cy, radius, zlo, zhi in pothole_specs:
         d = np.hypot(ground_xy[:, 0] - cx, ground_xy[:, 1] - cy)
@@ -53,15 +59,13 @@ def load_sample_points(num_points: int = 6000, seed: int = 42) -> np.ndarray:
         pothole_parts.append(np.column_stack([px, py, pz]))
     potholes = np.vstack(pothole_parts)
 
-    # --- Obstacles (tall clusters, various distances) ---
     obstacle_specs = [
-        # (centre_x, centre_y, spread, z_min, z_max, n_points)
-        (  5.0,  2.0,  0.8, 0.6, 1.8, 120),   # near zone – sedan blocker
-        ( -4.0,  3.5,  0.6, 0.5, 1.2, 100),   # near zone – sedan+suv blocker
-        ( 18.0, -5.0,  1.5, 0.8, 2.5, 200),   # mid zone – generic wall
-        ( 25.0,  8.0,  2.0, 1.0, 3.5, 220),   # mid zone – large obstacle
-        ( 40.0,  0.0,  3.0, 0.6, 4.0, 250),   # far zone – big structure
-        (-20.0, 12.0,  2.5, 0.5, 2.0, 180),   # far zone
+        (  5.0,  2.0,  0.8, 0.6, 1.8, 120),
+        ( -4.0,  3.5,  0.6, 0.5, 1.2, 100),
+        ( 18.0, -5.0,  1.5, 0.8, 2.5, 200),
+        ( 25.0,  8.0,  2.0, 1.0, 3.5, 220),
+        ( 40.0,  0.0,  3.0, 0.6, 4.0, 250),
+        (-20.0, 12.0,  2.5, 0.5, 2.0, 180),
     ]
 
     obstacle_parts = []
@@ -72,10 +76,8 @@ def load_sample_points(num_points: int = 6000, seed: int = 42) -> np.ndarray:
         obstacle_parts.append(np.hstack([ox, oy, oz]))
     obstacles = np.vstack(obstacle_parts)
 
-    # --- Rough patches (moderate Z variance, drivable for truck/suv only) ---
     n_rough = num_points - n_ground - len(obstacles)
     rough_xy = rng.uniform(-20, 20, (n_rough, 2))
-    # only generate rough patches in the mid-distance ring
     dist = np.linalg.norm(rough_xy, axis=1)
     mask = (dist > 10) & (dist < 30)
     rough_xy = rough_xy[mask][:n_rough]
@@ -87,33 +89,51 @@ def load_sample_points(num_points: int = 6000, seed: int = 42) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
-# Optional: KITTI binary loader  (.bin files from KITTI/nuScenes)
+# KITTI / SemanticKITTI loaders
 # ---------------------------------------------------------------------------
 
 def load_kitti_bin(filepath: str | Path) -> np.ndarray:
-    """
-    Load a KITTI-format .bin point cloud file.
-    Each point is stored as (x, y, z, intensity) float32.
-    Returns an (N, 3) array (intensity column dropped).
-    """
+    """KITTI Velodyne .bin → (N, 3) xyz. Intensity is dropped."""
     path = Path(filepath)
     if not path.exists():
         raise FileNotFoundError(f"Point cloud file not found: {path}")
-
     raw = np.fromfile(str(path), dtype=np.float32).reshape(-1, 4)
-    return raw[:, :3]   # drop intensity, keep x y z
+    return raw[:, :3]
 
 
-# ---------------------------------------------------------------------------
-# Curated dataset loader  (real KITTI frames under data/lidar/)
-# ---------------------------------------------------------------------------
-
-DATASET_DIR = Path(__file__).parent / "lidar"
+def load_semantic_labels(frame_id: str) -> np.ndarray | None:
+    """SemanticKITTI .label → (N,) uint32 semantic class (lower 16 bits)."""
+    path = DATASET_DIR / "labels" / f"{frame_id}.label"
+    if not path.exists():
+        return None
+    raw = np.fromfile(str(path), dtype=np.uint32)
+    return (raw & np.uint32(0xFFFF)).astype(np.int32)
 
 
 def list_frames() -> list[str]:
-    """Return the sorted frame ids in the curated dataset (e.g. 'frame_000000')."""
-    return sorted(p.stem for p in (DATASET_DIR / "raw").glob("*.bin"))
+    """Sorted canonical ids present on disk, e.g. 'frame_000000'."""
+    raw_dir = DATASET_DIR / "raw"
+    if not raw_dir.exists():
+        return []
+    return sorted(p.stem for p in raw_dir.glob("*.bin"))
+
+
+def raw_point_count(frame_id: str) -> int:
+    path = DATASET_DIR / "raw" / f"{frame_id}.bin"
+    if not path.exists():
+        return 0
+    return path.stat().st_size // 16
+
+
+def _estimate_ground_z(pts: np.ndarray, labels: np.ndarray | None) -> float:
+    """Road-class median when labels exist; otherwise a low percentile of near points."""
+    if labels is not None and len(labels) == len(pts):
+        road = np.isin(labels, tuple(ROAD_CLASSES))
+        if int(road.sum()) >= 50:
+            return float(np.median(pts[road, 2]))
+    near = np.hypot(pts[:, 0], pts[:, 1]) < 30.0
+    sample = pts[near] if near.any() else pts
+    return float(np.percentile(sample[:, 2], 15))
 
 
 def load_frame(
@@ -121,36 +141,94 @@ def load_frame(
     normalize_ground: bool = True,
     forward_only: bool = False,
     max_range: float = 100.0,
-) -> np.ndarray:
+    min_range: float = 1.5,
+    z_clip: tuple[float, float] = (-4.0, 20.0),
+) -> tuple[np.ndarray, np.ndarray | None]:
     """
-    Load one curated KITTI frame as an (N, 3) float32 (x, y, z) cloud, ready
-    for the AdaptiveGrid.
+    Load one curated KITTI frame as (N, 3) xyz plus optional SemanticKITTI labels.
 
-    KITTI's Velodyne is mounted ~1.7 m above the road, so the raw ground plane
-    sits near Z ≈ -1.6 m. The rest of the pipeline (and the frontend) assume the
-    road surface is ≈ 0, so `normalize_ground` shifts the cloud down by the
-    estimated ground height. This is required for real frames to classify
-    sensibly — without it, the entire road reads as a deep depression.
+    The Velodyne sits ~1.73 m above the road, so raw ground is near Z ≈ −1.7 m.
+    `normalize_ground` shifts the cloud so the road surface is ≈ 0, using labeled
+    road points when the .label file is present.
 
-    Args:
-        frame_id:         canonical id, e.g. "frame_000000".
-        normalize_ground: subtract the estimated ground plane so road ≈ 0.
-        forward_only:     keep only points ahead of the vehicle (x > 0).
-        max_range:        drop points beyond this radial distance (m) — matches
-                          the grid's far-zone cap so we don't bin what we ignore.
+    Range and Z clips are a cheap noise/ego filter (not a learned denoiser).
     """
-    pts = load_kitti_bin(DATASET_DIR / "raw" / f"{frame_id}.bin")   # (N, 3)
+    pts = load_kitti_bin(DATASET_DIR / "raw" / f"{frame_id}.bin")
+    labels = load_semantic_labels(frame_id)
+    if labels is not None and len(labels) != len(pts):
+        labels = None
 
     radial = np.hypot(pts[:, 0], pts[:, 1])
-    pts = pts[radial <= max_range]
-
+    z_lo, z_hi = z_clip
+    keep = (radial >= min_range) & (radial <= max_range)
+    keep &= (pts[:, 2] >= z_lo) & (pts[:, 2] <= z_hi)
     if forward_only:
-        pts = pts[pts[:, 0] > 0.0]
+        keep &= pts[:, 0] > 0.0
+    pts = pts[keep]
+    if labels is not None:
+        labels = labels[keep]
 
     if normalize_ground:
-        near = pts[np.hypot(pts[:, 0], pts[:, 1]) < 30.0]
-        ground_z = float(np.median(near[:, 2])) if len(near) else float(np.median(pts[:, 2]))
+        ground_z = _estimate_ground_z(pts, labels)
         pts = pts.copy()
-        pts[:, 2] -= ground_z   # bring road surface to ~0
+        pts[:, 2] -= ground_z
 
-    return np.ascontiguousarray(pts, dtype=np.float32)
+    return np.ascontiguousarray(pts, dtype=np.float32), labels
+
+
+def _compact_frame(entry: dict) -> dict:
+    metrics = entry.get("metrics") or {}
+    return {
+        "id":           entry.get("foveadrive_frame_id"),
+        "sequence":     entry.get("source_sequence"),
+        "source_frame": entry.get("source_frame"),
+        "category":     entry.get("selection_category") or "untagged",
+        "population":   entry.get("population") or "untagged",
+        "difficulty":   round(float(metrics.get("difficulty", 0.0)), 3),
+        "special":      bool(entry.get("is_special")),
+    }
+
+
+def list_dataset_frames() -> list[dict]:
+    """Compact catalog of frames that actually exist under data/lidar/raw/."""
+    global _CATALOG, _COMPACT_FRAMES
+    if _COMPACT_FRAMES is not None:
+        return _COMPACT_FRAMES
+    on_disk = set(list_frames())
+    meta_path = DATASET_DIR / "metadata" / "frames.json"
+    if meta_path.exists():
+        if _CATALOG is None:
+            with meta_path.open(encoding="utf-8") as f:
+                _CATALOG = json.load(f)
+        frames = []
+        for entry in _CATALOG.get("frames", []):
+            fid = entry.get("foveadrive_frame_id")
+            if fid in on_disk:
+                frames.append(_compact_frame(entry))
+        if frames:
+            _COMPACT_FRAMES = frames
+            return _COMPACT_FRAMES
+    _COMPACT_FRAMES = [
+        {
+            "id": fid,
+            "sequence": None,
+            "source_frame": None,
+            "category": "kitti",
+            "population": "on_disk",
+            "difficulty": 0.0,
+            "special": False,
+        }
+        for fid in sorted(on_disk)
+    ]
+    return _COMPACT_FRAMES
+
+
+def dataset_header() -> dict:
+    if _CATALOG is None and (DATASET_DIR / "metadata" / "frames.json").exists():
+        list_dataset_frames()
+    if _CATALOG:
+        return {
+            "name":    _CATALOG.get("dataset", "FoveaDrive LiDAR Dataset"),
+            "version": _CATALOG.get("version", "v1"),
+        }
+    return {"name": "FoveaDrive LiDAR Dataset", "version": "local"}

@@ -16,7 +16,38 @@ export interface GridCell {
   terrain: 'ground' | 'rough' | 'obstacle' | 'depression';
   drivable: boolean;
   reason: string;
-  color: string; // hex ready to paint
+  color: string;
+  semantic?: number;
+  semantic_name?: string;
+  obstacle_frac?: number;
+}
+
+export interface LidarFrame {
+  id: string;
+  sequence: string | null;
+  source_frame: string | null;
+  category: string;
+  population: string;
+  difficulty: number;
+  special: boolean;
+}
+
+export interface DatasetCurrent {
+  source: 'kitti' | 'synthetic';
+  frame_id: string | null;
+  point_count: number | null;
+  labeled?: boolean;
+  sequence?: string | null;
+  category?: string;
+  difficulty?: number;
+  special?: boolean;
+}
+
+export interface DatasetResponse {
+  name: string;
+  version: string;
+  current: DatasetCurrent;
+  frames: LidarFrame[];
 }
 
 export interface MapStats {
@@ -32,23 +63,32 @@ export interface CustomMapResponse {
   cells: GridCell[];
 }
 
-// Preset vehicle (sedan / suv / truck — lowercase)
-export const fetchMap = (vehicle: string): Promise<GridCell[]> =>
-  get<GridCell[]>(`/map?vehicle=${vehicle.toLowerCase()}`);
+export const fetchDataset = (): Promise<DatasetResponse> =>
+  get<DatasetResponse>('/dataset');
 
-export const fetchMapStats = (vehicle: string): Promise<MapStats> =>
-  get<MapStats>(`/map/stats?vehicle=${vehicle.toLowerCase()}`);
+export const fetchMap = (vehicle: string, frame?: string): Promise<GridCell[]> => {
+  const q = new URLSearchParams({ vehicle: vehicle.toLowerCase() });
+  if (frame) q.set('frame', frame);
+  return get<GridCell[]>(`/map?${q}`);
+};
 
-// Slider-driven custom params (one call returns both cells + stats)
+export const fetchMapStats = (vehicle: string, frame?: string): Promise<MapStats> => {
+  const q = new URLSearchParams({ vehicle: vehicle.toLowerCase() });
+  if (frame) q.set('frame', frame);
+  return get<MapStats>(`/map/stats?${q}`);
+};
+
 export const fetchCustomMap = (p: {
-  ground_clearance: number; // metres
-  width: number;            // metres
-  wheel_radius: number;     // metres
+  ground_clearance: number;
+  width: number;
+  wheel_radius: number;
+  frame?: string;
 }): Promise<CustomMapResponse> => {
   const q = new URLSearchParams({
     ground_clearance: String(p.ground_clearance),
     width:            String(p.width),
     wheel_radius:     String(p.wheel_radius),
   });
+  if (p.frame) q.set('frame', p.frame);
   return get<CustomMapResponse>(`/map/custom?${q}`);
 };
