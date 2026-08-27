@@ -77,8 +77,11 @@ def _load_points():
         normalize_ground=DATA_CONFIG["normalize_ground"],
         forward_only=DATA_CONFIG["forward_only"],
         max_range=GRID_CONFIG["far"]["max_dist"],
-        min_range=DATA_CONFIG.get("min_range", 1.5),
+        min_range=DATA_CONFIG.get("min_range", 2.0),
         z_clip=DATA_CONFIG.get("z_clip", (-4.0, 20.0)),
+        ego_x=tuple(DATA_CONFIG.get("ego_x", (-2.4, 3.2))),
+        ego_half_width=float(DATA_CONFIG.get("ego_half_width", 1.5)),
+        ego_z_min=float(DATA_CONFIG.get("ego_z_min", 0.40)),
     )
 
 

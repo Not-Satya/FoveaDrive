@@ -1,4 +1,5 @@
 # backend/api/server.py
+# FoveaDrive HUD API — scan/look query params + per-mode grid cache.
 
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware

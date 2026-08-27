@@ -35,7 +35,7 @@ export function FoveaDriveHUD() {
           lookDir={hudState.lookDir}
           toggleLookDir={hudState.toggleLookDir}
           cells={cells}
-          loading={mapLoading && !hudState.playing}
+          loading={mapLoading}
           playing={hudState.playing}
           heading={359.7}
           elevation={telemetry.incline}

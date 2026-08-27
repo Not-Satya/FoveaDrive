@@ -62,7 +62,7 @@ export function ViewportHUD({
       </div>
 
       {/* ── Left HUD: speed, terrain analysis, legend ────────────────────── */}
-      <div className="absolute left-4 top-10 z-20 pointer-events-none flex flex-col gap-3">
+      <div className="absolute left-4 top-14 z-20 pointer-events-none flex flex-col gap-3">
         <div className="text-[10px] font-mono tracking-widest text-icy-blue/70 uppercase tabular-nums">
           SYSTEM_SPEED: <span className="text-icy-blue">{speed.toFixed(1)} KM/H</span>
         </div>
@@ -82,9 +82,11 @@ export function ViewportHUD({
               : 'border-[#2B4C6F]/70 bg-[#060B14]/50 text-icy-blue/80'
           }`}
         >
-          <div className="text-[8px] tracking-[0.2em] uppercase text-icy-blue/40 mb-1">Terrain analysis</div>
+          <div className="text-[8px] tracking-[0.2em] uppercase text-icy-blue/40 mb-1">Terrain analysis · path ahead</div>
           <div className="flex items-center gap-2 text-[10px] font-mono tracking-widest uppercase">
-            <span className="material-symbols-outlined text-[14px] text-[#F472B6]">warning</span>
+            {(isHazardous || isCaution) && (
+              <span className="material-symbols-outlined text-[14px] text-[#F472B6]">warning</span>
+            )}
             {terrainStatus}
           </div>
         </div>
@@ -124,7 +126,7 @@ export function ViewportHUD({
       </div>
 
       {/* ── Right HUD: mode + compass ────────────────────────────────────── */}
-      <div className="absolute top-10 right-4 z-20 flex flex-col items-end gap-3">
+      <div className="absolute top-14 right-4 z-20 flex flex-col items-end gap-3">
         <div className="relative">
           <button
             onClick={toggleScanMode}
@@ -231,6 +233,51 @@ export function SlideReveal({
   );
 }
 
+export function HudSwitch({
+  on,
+  onColor = 'emerald',
+}: {
+  on: boolean;
+  onColor?: 'emerald' | 'amber';
+}) {
+  return (
+    <span
+      className={`hud-switch hud-switch--${onColor}${on ? ' is-on' : ''}`}
+      aria-hidden
+    >
+      <span className="hud-switch-knob" />
+    </span>
+  );
+}
+
+export function HudSlider({
+  min,
+  max,
+  step = 1,
+  value,
+  onChange,
+}: {
+  min: number;
+  max: number;
+  step?: number;
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  const pct = ((value - min) / (max - min)) * 100;
+  return (
+    <input
+      type="range"
+      className="hud-range"
+      min={min}
+      max={max}
+      step={step}
+      value={value}
+      onChange={(e) => onChange(parseFloat(e.target.value))}
+      style={{ ['--pct' as string]: `${pct}%` }}
+    />
+  );
+}
+
 export function LookToggle({
   lookDir,
   onToggle,
@@ -247,25 +294,14 @@ export function LookToggle({
       type="button"
       onClick={onToggle}
       aria-pressed={rear}
-      className={`inline-flex w-[9.75rem] items-center justify-between gap-2.5 border px-3 py-1.5 uppercase tracking-widest text-[10px] transition-colors backdrop-blur-sm ${
+      className={`inline-flex w-[9.75rem] items-center justify-between gap-2.5 border px-3 py-1.5 leading-none uppercase tracking-widest text-[10px] transition-colors backdrop-blur-sm ${
         rear
           ? 'border-amber-400/60 bg-amber-500/10 text-amber-200'
           : 'border-emerald-400/50 bg-emerald-500/10 text-emerald-300'
       } ${className}`}
     >
-      <span className="tabular-nums">{rear ? 'REAR' : 'FRONT'}</span>
-      <span
-        className={`relative h-4 w-8 shrink-0 rounded-full border transition-colors ${
-          rear ? 'border-amber-300/80 bg-amber-400/25' : 'border-emerald-300/80 bg-emerald-400/25'
-        }`}
-      >
-        <span
-          className={`absolute top-0.5 left-0.5 size-3 rounded-full transition-transform duration-[600ms] ease-[cubic-bezier(0.33,0,0.2,1)] ${
-            rear ? 'bg-amber-200' : 'bg-emerald-200'
-          }`}
-          style={{ transform: rear ? 'translate3d(14px,0,0)' : 'translate3d(0,0,0)' }}
-        />
-      </span>
+      <span className="tabular-nums leading-none">{rear ? 'REAR' : 'FRONT'}</span>
+      <HudSwitch on={rear} onColor={rear ? 'amber' : 'emerald'} />
     </button>
   );
 }

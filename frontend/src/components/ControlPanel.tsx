@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { useHUDState } from "../hooks/useHUDState";
 import { VehicleProfile } from "../types";
-import { LookToggle, SlideReveal } from "./ViewportHUD";
+import { HudSlider, LookToggle, SlideReveal } from "./ViewportHUD";
 
 const HUD_SHIFT =
   'transform 560ms cubic-bezier(0.37, 0, 0.63, 1), opacity 420ms cubic-bezier(0.37, 0, 0.63, 1)';
@@ -210,32 +210,13 @@ export function ControlPanel(
                   <span>{label}</span>
                   <span className="tabular-nums">{val.toFixed(step < 1 ? 1 : 0)}{unit}</span>
                 </div>
-                <div className="relative flex items-center h-2">
-                  <input 
-                    type="range" 
-                    min={min} 
-                    max={max} 
-                    step={step}
-                    value={val}
-                    onChange={(e) => handleParamChange(param as keyof typeof kinematicParams, parseFloat(e.target.value))}
-                    className="absolute inset-0 w-full h-1 bg-[#2B4C6F] appearance-none rounded-full outline-none z-10 opacity-0 cursor-pointer"
-                  />
-                  {/* Visual Background */}
-                  <div
-                    className="absolute inset-x-0 h-1 rounded-full"
-                    style={{ background: 'linear-gradient(90deg, #7c3aed, #22d3ee)' }}
-                  />
-                  {/* Visual fill element */}
-                  <div
-                    className="absolute left-0 h-1 bg-white/80 pointer-events-none transition-all duration-500 ease-out rounded-full"
-                    style={{ width: `${((val - min) / (max - min)) * 100}%` }}
-                  />
-                  {/* Custom Thumb */}
-                  <div
-                    className="absolute size-[10px] bg-white rounded-full shadow-[0_0_10px_rgba(188,227,255,0.9)] pointer-events-none -translate-x-1/2 transition-all duration-500 ease-out group-hover:scale-125"
-                    style={{ left: `${((val - min) / (max - min)) * 100}%` }}
-                  />
-                </div>
+                <HudSlider
+                  min={min}
+                  max={max}
+                  step={step}
+                  value={val}
+                  onChange={(v) => handleParamChange(param as keyof typeof kinematicParams, v)}
+                />
               </div>
             ))}
 

@@ -15,7 +15,8 @@ def evaluate_drivability(grid_data: List[Dict], vehicle: Dict) -> List[Dict]:
             depth > wheel_radius * 0.5 → pothole, else pothole_ok
       3. Any obstacle within vehicle_width/2 → obstacle_nearby
       4. terrain == "rough" → too_rough or rough_ok
-      5. ground step vs ground_clearance
+      5. ground step vs ground_clearance using height relative to the road plane
+         (absolute Z at the sensor treats a gentle grade as a clearance failure)
     """
     clearance   = vehicle["ground_clearance"]
     max_rough   = vehicle["max_roughness"]
@@ -25,7 +26,12 @@ def evaluate_drivability(grid_data: List[Dict], vehicle: Dict) -> List[Dict]:
     hw2 = half_width ** 2
 
     obs = np.array(
-        [[c["x"], c["y"]] for c in grid_data if c["terrain"] == "obstacle"],
+        [
+            [c["x"], c["y"]]
+            for c in grid_data
+            if c["terrain"] == "obstacle"
+            and (float(c["x"]) ** 2 + float(c["y"]) ** 2) >= 6.25
+        ],
         dtype=np.float64,
     )
 
@@ -37,7 +43,7 @@ def evaluate_drivability(grid_data: List[Dict], vehicle: Dict) -> List[Dict]:
 
     for cell in grid_data:
         terrain = cell["terrain"]
-        h       = cell["height"]
+        h       = float(cell.get("height_rel", cell["height"]))
         std     = cell["height_std"]
 
         if terrain == "obstacle":

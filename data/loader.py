@@ -125,6 +125,37 @@ def raw_point_count(frame_id: str) -> int:
     return path.stat().st_size // 16
 
 
+def _drop_ego_body(
+    pts: np.ndarray,
+    labels: np.ndarray | None,
+    x_range: tuple[float, float] = (-2.4, 3.2),
+    y_half: float = 1.5,
+    z_min: float = 0.40,
+) -> tuple[np.ndarray, np.ndarray | None]:
+    """
+    Drop hood / roof / mirror returns that survive a radial min_range cut.
+
+    After ground normalize those hits sit ~0.9–1.3 m above the road, 1.5–3 m
+    from the origin — they bin as 1 m obstacle pillars in the sensor blind spot.
+    Ground under the car (z ≈ 0) is kept.
+    """
+    if pts.size == 0:
+        return pts, labels
+    body = (
+        (pts[:, 0] >= x_range[0])
+        & (pts[:, 0] <= x_range[1])
+        & (np.abs(pts[:, 1]) <= y_half)
+        & (pts[:, 2] > z_min)
+    )
+    if not np.any(body):
+        return pts, labels
+    keep = ~body
+    pts = np.ascontiguousarray(pts[keep], dtype=np.float32)
+    if labels is not None:
+        labels = np.ascontiguousarray(labels[keep])
+    return pts, labels
+
+
 def _estimate_ground_z(pts: np.ndarray, labels: np.ndarray | None) -> float:
     """Road-class median when labels exist; otherwise a low percentile of near points."""
     if labels is not None and len(labels) == len(pts):
@@ -141,8 +172,11 @@ def load_frame(
     normalize_ground: bool = True,
     forward_only: bool = False,
     max_range: float = 100.0,
-    min_range: float = 1.5,
+    min_range: float = 2.0,
     z_clip: tuple[float, float] = (-4.0, 20.0),
+    ego_x: tuple[float, float] = (-2.4, 3.2),
+    ego_half_width: float = 1.5,
+    ego_z_min: float = 0.40,
 ) -> tuple[np.ndarray, np.ndarray | None]:
     """
     Load one curated KITTI frame as (N, 3) xyz plus optional SemanticKITTI labels.
@@ -151,7 +185,8 @@ def load_frame(
     `normalize_ground` shifts the cloud so the road surface is ≈ 0, using labeled
     road points when the .label file is present.
 
-    Range and Z clips are a cheap noise/ego filter (not a learned denoiser).
+    Range / Z clips drop flyers. After ground normalize, a 3D ego box drops
+    hood / roof / mirror returns that otherwise bin as tall blind-spot pillars.
     """
     pts = load_kitti_bin(DATASET_DIR / "raw" / f"{frame_id}.bin")
     labels = load_semantic_labels(frame_id)
@@ -172,6 +207,12 @@ def load_frame(
         ground_z = _estimate_ground_z(pts, labels)
         pts = pts.copy()
         pts[:, 2] -= ground_z
+        pts, labels = _drop_ego_body(
+            pts, labels,
+            x_range=ego_x,
+            y_half=ego_half_width,
+            z_min=ego_z_min,
+        )
 
     return np.ascontiguousarray(pts, dtype=np.float32), labels
 

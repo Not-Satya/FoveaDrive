@@ -21,7 +21,24 @@ const PROFILES: Record<VehicleProfile, KinematicParams> = {
 
 const cmToM = (cm: number) => Math.round((cm / 100) * 1000) / 1000;
 
-function toTerrainStatus(pct: number): string {
+function corridorDrivablePct(cells: GridCell[], scanMode: ScanMode, lookDir: LookDir): number {
+  const rear = scanMode === 'windshield' && lookDir === 'rear';
+  const band = cells.filter((c) => {
+    if (Math.abs(c.y) > 2.0) return false;
+    if (c.zone === 'far') return false;
+    return rear ? c.x <= -2 && c.x >= -30 : c.x >= 2 && c.x <= 30;
+  });
+  const sample = band.length >= 12
+    ? band
+    : cells.filter((c) => c.zone === 'near' && Math.abs(c.y) <= 2.5);
+  if (sample.length === 0) return 100;
+  return Math.round(100 * sample.filter((c) => c.drivable).length / sample.length);
+}
+
+function toTerrainStatus(pct: number, prev: string): string {
+  if (prev === 'SAFE / DRIVABLE' && pct >= 62) return prev;
+  if (prev === 'HAZARDOUS / UNTRAVERSABLE' && pct < 50) return prev;
+  if (prev === 'CAUTION / PARTIAL' && pct >= 38 && pct < 78) return prev;
   if (pct >= 70) return 'SAFE / DRIVABLE';
   if (pct >= 40) return 'CAUTION / PARTIAL';
   return 'HAZARDOUS / UNTRAVERSABLE';
@@ -93,7 +110,17 @@ export function useHUDState() {
   const playingRef = useRef(false);
   playingRef.current = playing;
   const mapTickRef = useRef({ n: 0, t: performance.now() });
+  const terrainStatusRef = useRef('SAFE / DRIVABLE');
   const debouncedParams = useDebounce(kinematicParams, 400);
+
+  const applyMapCells = useCallback((data: GridCell[]) => {
+    setCells(data);
+    const pct = corridorDrivablePct(data, scanMode, lookDir);
+    const status = toTerrainStatus(pct, terrainStatusRef.current);
+    terrainStatusRef.current = status;
+    setDrivablePct(pct);
+    setTerrainStatus(status);
+  }, [scanMode, lookDir]);
 
   const fpsRef   = useRef<number>(0);
   const frameRef = useRef<number>(0);
@@ -166,21 +193,16 @@ export function useHUDState() {
     if (isCustomMode) return;
     let cancelled = false;
     setMapLoading(true);
-    fetchMap(activeProfile, frameId, scanMode, scanMode === 'windshield' ? lookDir : undefined)
+    fetchMap(activeProfile, frameId, 'surround')
       .then(data => {
         if (cancelled) return;
-        setCells(data);
-        const pct = data.length
-          ? Math.round(data.filter(c => c.drivable).length / data.length * 100)
-          : 100;
-        setDrivablePct(pct);
-        setTerrainStatus(toTerrainStatus(pct));
+        applyMapCells(data);
         if (playingRef.current) bumpMapHz(mapTickRef.current, setTelemetry);
       })
       .catch(console.error)
       .finally(() => { if (!cancelled) setMapLoading(false); });
     return () => { cancelled = true; };
-  }, [activeProfile, isCustomMode, frameId, catalogReady, scanMode, lookDir]);
+  }, [activeProfile, isCustomMode, frameId, catalogReady, applyMapCells]);
 
   useEffect(() => {
     if (!catalogReady) return;
@@ -192,20 +214,17 @@ export function useHUDState() {
       width:            debouncedParams.chassisWidth,
       wheel_radius:     cmToM(debouncedParams.wheelRadius),
       frame:            frameId,
-      scan:             scanMode,
-      look:             scanMode === 'windshield' ? lookDir : undefined,
+      scan:             'surround',
     })
-      .then(({ cells: data, stats }) => {
+      .then(({ cells: data }) => {
         if (cancelled) return;
-        setCells(data);
-        setDrivablePct(stats.drivable_pct);
-        setTerrainStatus(toTerrainStatus(stats.drivable_pct));
+        applyMapCells(data);
         if (playingRef.current) bumpMapHz(mapTickRef.current, setTelemetry);
       })
       .catch(console.error)
       .finally(() => { if (!cancelled) setMapLoading(false); });
     return () => { cancelled = true; };
-  }, [debouncedParams, isCustomMode, frameId, catalogReady, scanMode, lookDir]);
+  }, [debouncedParams, isCustomMode, frameId, catalogReady, applyMapCells]);
 
   useEffect(() => {
     if (!playing || !catalogReady) return;

@@ -23,25 +23,67 @@ const WINDSHIELD_YAW_MAX = 0.42;
 const DEFAULT_YAW = Math.PI / 5;
 const DEFAULT_PITCH = 0.58;
 const DEFAULT_ZOOM = 1;
-const WINDSHIELD_YAW = 0;
-const REAR_YAW = Math.PI;
-const WINDSHIELD_PITCH = 0.80;
-const WINDSHIELD_ZOOM = 1.2;
+const WINDSHIELD_YAW = Math.PI / 11;
+const REAR_YAW = Math.PI + WINDSHIELD_YAW;
+const WINDSHIELD_PITCH = 0.46;
+const WINDSHIELD_ZOOM = 1.58;
 const PITCH_MIN = 0.22;
 const PITCH_MAX = 0.92;
 const ZOOM_MIN = 0.4;
 const ZOOM_MAX = 5;
 const VOXEL_INSET = 0.10;
 
-function camDefaults(mode: ScanMode, look: LookDir = 'front') {
+type CamPose = { yaw: number; pitch: number; zoom: number; blend: number; heading: number };
+
+function camDefaults(mode: ScanMode, look: LookDir = 'front'): CamPose {
+  const heading = look === 'rear' ? Math.PI : 0;
   if (mode === 'windshield') {
     return {
-      yaw: look === 'rear' ? REAR_YAW : WINDSHIELD_YAW,
+      yaw: heading + WINDSHIELD_YAW,
       pitch: WINDSHIELD_PITCH,
       zoom: WINDSHIELD_ZOOM,
+      blend: 1,
+      heading,
     };
   }
-  return { yaw: DEFAULT_YAW, pitch: DEFAULT_PITCH, zoom: DEFAULT_ZOOM };
+  return { yaw: DEFAULT_YAW, pitch: DEFAULT_PITCH, zoom: DEFAULT_ZOOM, blend: 0, heading: 0 };
+}
+
+function wrapPi(d: number) {
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return d;
+}
+
+function lerpAngle(a: number, b: number, t: number) {
+  let d = b - a;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return a + d * t;
+}
+
+function easeInOut(t: number) {
+  return 0.5 - 0.5 * Math.cos(Math.PI * t);
+}
+
+function easeOutCubic(t: number) {
+  const inv = 1 - t;
+  return 1 - inv * inv * inv;
+}
+
+function delayEase(t: number, hold: number) {
+  if (t <= hold) return 0;
+  return easeInOut((t - hold) / (1 - hold));
+}
+
+function fitScale(cssW: number, cssH: number, pose: CamPose) {
+  const { yaw, pitch, zoom, blend } = pose;
+  if (blend > 0.5) {
+    const halfW = WINDSHIELD_RANGE * Math.tan(WINDSHIELD_FOV / 2);
+    return Math.min(cssW / (halfW * 2.2), cssH / (WINDSHIELD_RANGE * pitch * 1.28)) * zoom;
+  }
+  const extent = WORLD_RANGE * (Math.abs(Math.cos(yaw)) + Math.abs(Math.sin(yaw)));
+  return Math.min(cssW / (extent * 2.2), cssH / (extent * 2.2 * pitch)) * zoom;
 }
 
 type Kind = 'clear' | 'rough' | 'nearby' | 'blocked' | 'pothole';
@@ -217,13 +259,16 @@ function fogFor(dist: number, t: number): number {
 function renderMap(
   canvas: HTMLCanvasElement,
   cells: GridCell[],
-  loading: boolean,
+  _loading: boolean,
   mappingMode: MappingMode = 'DRIVABILITY_MAP',
   yaw = DEFAULT_YAW,
   pitch = DEFAULT_PITCH,
   zoom = DEFAULT_ZOOM,
   scanMode: ScanMode = 'surround',
   lookDir: LookDir = 'front',
+  blend = scanMode === 'windshield' ? 1 : 0,
+  scaleOverride: number | null = null,
+  heading = lookDir === 'rear' ? Math.PI : 0,
 ) {
   const parent = canvas.parentElement;
   const cssW = parent?.clientWidth  || canvas.clientWidth  || 1;
@@ -242,23 +287,19 @@ function renderMap(
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, cssW, cssH);
 
-  const windshield = scanMode === 'windshield';
-  const rear = windshield && lookDir === 'rear';
-  const along = rear ? -1 : 1;
-  const range = windshield ? WINDSHIELD_RANGE : WORLD_RANGE;
-  const fovHalf = WINDSHIELD_FOV / 2;
+  const b = Math.max(0, Math.min(1, blend));
+  const range = lerp(WORLD_RANGE, WINDSHIELD_RANGE, b);
+  const fovHalf = lerp(Math.PI * 0.98, WINDSHIELD_FOV / 2, b);
+  const hx = Math.cos(heading);
+  const hy = Math.sin(heading);
+  const px = -hy;
+  const py = hx;
   const cos = Math.cos(yaw);
   const sin = Math.sin(yaw);
   const ox = cssW / 2;
-  const oy = cssH * (windshield ? 0.88 : 0.58);
-  let scale: number;
-  if (windshield) {
-    const halfW = range * Math.tan(fovHalf);
-    scale = Math.min(cssW / (halfW * 2.2), cssH / (range * pitch * 1.28)) * zoom;
-  } else {
-    const extent = range * (Math.abs(cos) + Math.abs(sin));
-    scale = Math.min(cssW / (extent * 2.2), cssH / (extent * 2.2 * pitch)) * zoom;
-  }
+  const oy = cssH * lerp(0.58, 0.88, b);
+  const pose: CamPose = { yaw, pitch, zoom, blend: b };
+  const scale = scaleOverride ?? fitScale(cssW, cssH, pose);
   const heightPx = scale * 1.35;
 
   const project = (x: number, y: number, z: number): Pt => {
@@ -272,13 +313,8 @@ function renderMap(
   };
 
   const inFov = (x: number, y: number) => {
-    if (!windshield) return true;
-    if (rear) {
-      if (x > 0.6) return false;
-      return Math.abs(Math.atan2(y, -x)) <= fovHalf + 0.06;
-    }
-    if (x < -0.6) return false;
-    return Math.abs(Math.atan2(y, x)) <= fovHalf + 0.06;
+    if (b < 0.1) return true;
+    return Math.abs(wrapPi(Math.atan2(y, x) - heading)) <= fovHalf + 0.06;
   };
 
   const quad = (pts: Pt[], fill: string, stroke?: string) => {
@@ -310,60 +346,64 @@ function renderMap(
 
   ctx.save();
   ctx.lineWidth = 0.6;
-  ctx.strokeStyle = 'rgba(43,76,111,0.22)';
-  if (windshield) {
-    for (let v = 5; v <= range; v += 5) {
-      const span = v * Math.tan(fovHalf);
-      const a = project(along * v, -span, 0);
-      const b = project(along * v,  span, 0);
-      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
-    }
-    for (const az of [-fovHalf, -fovHalf / 2, 0, fovHalf / 2, fovHalf]) {
-      const a = project(0, 0, 0);
-      const b = project(along * Math.cos(az) * range, Math.sin(az) * range, 0);
-      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
-    }
-  } else {
+  if (b < 0.55) {
+    ctx.globalAlpha = 1 - b * 1.15;
+    ctx.strokeStyle = 'rgba(43,76,111,0.22)';
     for (let v = -range; v <= range; v += 5) {
       const a = project(-range, v, 0);
-      const b = project( range, v, 0);
-      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+      const c2 = project(range, v, 0);
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(c2.x, c2.y); ctx.stroke();
       const c = project(v, -range, 0);
-      const d = project(v,  range, 0);
+      const d = project(v, range, 0);
       ctx.beginPath(); ctx.moveTo(c.x, c.y); ctx.lineTo(d.x, d.y); ctx.stroke();
+    }
+  }
+  if (b > 0.2) {
+    ctx.globalAlpha = Math.min(1, (b - 0.2) / 0.55);
+    ctx.strokeStyle = 'rgba(43,76,111,0.22)';
+    for (let v = 5; v <= range; v += 5) {
+      const span = v * Math.tan(WINDSHIELD_FOV / 2);
+      const a = project(hx * v - px * span, hy * v - py * span, 0);
+      const bb = project(hx * v + px * span, hy * v + py * span, 0);
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(bb.x, bb.y); ctx.stroke();
+    }
+    for (const az of [-WINDSHIELD_FOV / 2, -WINDSHIELD_FOV / 4, 0, WINDSHIELD_FOV / 4, WINDSHIELD_FOV / 2]) {
+      const a = project(0, 0, 0);
+      const bb = project(Math.cos(heading + az) * range, Math.sin(heading + az) * range, 0);
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(bb.x, bb.y); ctx.stroke();
     }
   }
   ctx.restore();
 
-  if (windshield) {
+  if (b > 0.04) {
     const origin = project(0, 0, 0);
     ctx.beginPath();
     ctx.moveTo(origin.x, origin.y);
     for (let i = 0; i <= 48; i++) {
-      const az = -fovHalf + (i / 48) * WINDSHIELD_FOV;
-      const p = project(along * Math.cos(az) * range, Math.sin(az) * range, 0);
+      const az = heading - WINDSHIELD_FOV / 2 + (i / 48) * WINDSHIELD_FOV;
+      const p = project(Math.cos(az) * range, Math.sin(az) * range, 0);
       ctx.lineTo(p.x, p.y);
     }
     ctx.closePath();
-    ctx.fillStyle = 'rgba(188,227,255,0.04)';
+    ctx.fillStyle = `rgba(188,227,255,${0.045 * b})`;
     ctx.fill();
-    ctx.strokeStyle = 'rgba(188,227,255,0.35)';
+    ctx.strokeStyle = `rgba(188,227,255,${0.35 * b})`;
     ctx.lineWidth = 1.2;
     ctx.stroke();
   }
 
   const drawRing = (r: number, color: string, width: number) => {
     ctx.beginPath();
-    const steps = windshield ? 36 : 72;
-    const a0 = windshield ? (rear ? Math.PI - fovHalf : -fovHalf) : 0;
-    const a1 = windshield ? (rear ? Math.PI + fovHalf : fovHalf) : Math.PI * 2;
+    const steps = Math.round(lerp(72, 36, b));
+    const a0 = lerp(0, heading - WINDSHIELD_FOV / 2, b);
+    const a1 = lerp(Math.PI * 2, heading + WINDSHIELD_FOV / 2, b);
     for (let i = 0; i <= steps; i++) {
       const t = a0 + (i / steps) * (a1 - a0);
       const p = project(Math.cos(t) * r, Math.sin(t) * r, 0);
       if (i === 0) ctx.moveTo(p.x, p.y);
       else ctx.lineTo(p.x, p.y);
     }
-    if (!windshield) ctx.closePath();
+    if (b < 0.2) ctx.closePath();
     ctx.setLineDash([5, 7]);
     ctx.strokeStyle = color;
     ctx.lineWidth = width;
@@ -374,7 +414,7 @@ function renderMap(
   drawRing(30, 'rgba(188,227,255,0.18)', 1.2);
 
   const labelRing = (r: number, text: string, color: string) => {
-    const p = project(along * r, 0, 0);
+    const p = project(hx * r, hy * r, 0);
     ctx.save();
     ctx.fillStyle = color;
     ctx.font = '9px "Space Mono", monospace';
@@ -484,16 +524,6 @@ function renderMap(
   ctx.lineWidth = 1.2;
   ctx.stroke();
   ctx.restore();
-
-  if (loading) {
-    ctx.fillStyle = 'rgba(5,8,15,0.45)';
-    ctx.fillRect(0, 0, cssW, cssH);
-    ctx.fillStyle = 'rgba(188,227,255,0.7)';
-    ctx.font = '11px "Space Mono", monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText('PROCESSING…', cssW / 2, cssH / 2);
-    ctx.textAlign = 'left';
-  }
 }
 
 export function MapCanvas({
@@ -514,10 +544,20 @@ export function MapCanvas({
   const yawRef = useRef(DEFAULT_YAW);
   const pitchRef = useRef(DEFAULT_PITCH);
   const zoomRef = useRef(DEFAULT_ZOOM);
+  const blendRef = useRef(scanMode === 'windshield' ? 1 : 0);
+  const headingRef = useRef(lookDir === 'rear' ? Math.PI : 0);
+  const scaleAnimRef = useRef<number | null>(null);
   const dragRef = useRef<{ x: number; y: number } | null>(null);
   const rafRef = useRef(0);
+  const camAnimRef = useRef(0);
+  const camInitRef = useRef(true);
+  const pendingPoseRef = useRef<CamPose | null>(null);
+  const incomingCellsRef = useRef<GridCell[] | null>(null);
+  const frozenRef = useRef(false);
+  const awaitingLoadRef = useRef(false);
+  const sawLoadRef = useRef(false);
   const viewCbRef = useRef(onViewChange);
-  cellsRef.current = cells;
+  if (!frozenRef.current) cellsRef.current = cells;
   loadingRef.current = loading;
   modeRef.current = mappingMode;
   scanRef.current = scanMode;
@@ -525,8 +565,8 @@ export function MapCanvas({
   viewCbRef.current = onViewChange;
 
   const clampYaw = (yaw: number) => {
-    if (scanRef.current !== 'windshield') return yaw;
-    const base = lookRef.current === 'rear' ? REAR_YAW : WINDSHIELD_YAW;
+    if (camAnimRef.current || scanRef.current !== 'windshield') return yaw;
+    const base = headingRef.current + WINDSHIELD_YAW;
     return Math.max(base - WINDSHIELD_YAW_MAX, Math.min(base + WINDSHIELD_YAW_MAX, yaw));
   };
 
@@ -543,7 +583,124 @@ export function MapCanvas({
       zoomRef.current,
       scanRef.current,
       lookRef.current,
+      blendRef.current,
+      scaleAnimRef.current,
+      headingRef.current,
     );
+  };
+
+  const stopCamAnim = () => {
+    if (!camAnimRef.current) return;
+    cancelAnimationFrame(camAnimRef.current);
+    camAnimRef.current = 0;
+    scaleAnimRef.current = null;
+  };
+
+  const panTo = (to: CamPose, onDone?: () => void) => {
+    stopCamAnim();
+    const canvas = canvasRef.current;
+    const parent = canvas?.parentElement;
+    const cssW = parent?.clientWidth || canvas?.clientWidth || 1;
+    const cssH = parent?.clientHeight || canvas?.clientHeight || 1;
+    const from: CamPose = {
+      yaw: yawRef.current,
+      pitch: pitchRef.current,
+      zoom: zoomRef.current,
+      blend: blendRef.current,
+      heading: headingRef.current,
+    };
+    const fromScale = fitScale(cssW, cssH, from);
+    const toScale = fitScale(cssW, cssH, to);
+    let dyaw = to.yaw - from.yaw;
+    while (dyaw > Math.PI) dyaw -= Math.PI * 2;
+    while (dyaw < -Math.PI) dyaw += Math.PI * 2;
+    const enteringWindshield = to.blend > from.blend + 0.05;
+    const ms = enteringWindshield
+      ? Math.max(740, Math.min(980, 680 + Math.abs(dyaw) * 260))
+      : Math.max(520, Math.min(880, 480 + Math.abs(dyaw) * 240 + Math.abs(to.blend - from.blend) * 180));
+    const finish = () => {
+      camAnimRef.current = 0;
+      scaleAnimRef.current = null;
+      onDone?.();
+      draw();
+    };
+    if (ms < 530 && Math.abs(dyaw) < 0.012 && Math.abs(to.pitch - from.pitch) < 0.01 && Math.abs(to.blend - from.blend) < 0.01) {
+      yawRef.current = to.yaw;
+      pitchRef.current = to.pitch;
+      zoomRef.current = to.zoom;
+      blendRef.current = to.blend;
+      headingRef.current = to.heading;
+      finish();
+      return;
+    }
+    const t0 = performance.now();
+    const tick = (now: number) => {
+      const u = Math.min(1, (now - t0) / ms);
+      const eCam = enteringWindshield ? easeOutCubic(u) : easeInOut(u);
+      const eBlend = enteringWindshield ? delayEase(u, 0.3) : easeInOut(u);
+      yawRef.current = lerpAngle(from.yaw, to.yaw, eCam);
+      pitchRef.current = lerp(from.pitch, to.pitch, eCam);
+      zoomRef.current = lerp(from.zoom, to.zoom, eCam);
+      blendRef.current = lerp(from.blend, to.blend, eBlend);
+      headingRef.current = lerpAngle(from.heading, to.heading, eCam);
+      scaleAnimRef.current = lerp(fromScale, toScale, eCam);
+      draw();
+      viewCbRef.current?.(yawRef.current, pitchRef.current);
+      if (u < 1) camAnimRef.current = requestAnimationFrame(tick);
+      else finish();
+    };
+    camAnimRef.current = requestAnimationFrame(tick);
+  };
+
+  const beginHeldPan = () => {
+    const pose = pendingPoseRef.current;
+    if (!pose) return;
+    pendingPoseRef.current = null;
+    awaitingLoadRef.current = false;
+    const enteringWindshield = pose.blend > blendRef.current + 0.05;
+    if (!enteringWindshield && incomingCellsRef.current) {
+      cellsRef.current = incomingCellsRef.current;
+    }
+    panTo(pose, () => {
+      if (incomingCellsRef.current) {
+        cellsRef.current = incomingCellsRef.current;
+        incomingCellsRef.current = null;
+      }
+      frozenRef.current = false;
+    });
+  };
+
+  const sweepWedge = (toHeading: number) => {
+    stopCamAnim();
+    const fromH = headingRef.current;
+    let d = wrapPi(toHeading - fromH);
+    if (Math.abs(d) < 0.04) {
+      headingRef.current = toHeading;
+      yawRef.current = toHeading + WINDSHIELD_YAW;
+      draw();
+      return;
+    }
+    if (Math.abs(Math.abs(d) - Math.PI) < 0.04) d = fromH < Math.PI / 2 ? Math.PI : -Math.PI;
+    const ms = 820;
+    const t0 = performance.now();
+    const tick = (now: number) => {
+      const u = Math.min(1, (now - t0) / ms);
+      const e = easeInOut(u);
+      const h = fromH + d * e;
+      headingRef.current = h;
+      yawRef.current = h + WINDSHIELD_YAW;
+      draw();
+      viewCbRef.current?.(yawRef.current, pitchRef.current);
+      if (u < 1) camAnimRef.current = requestAnimationFrame(tick);
+      else {
+        headingRef.current = toHeading;
+        yawRef.current = toHeading + WINDSHIELD_YAW;
+        camAnimRef.current = 0;
+        draw();
+        viewCbRef.current?.(yawRef.current, pitchRef.current);
+      }
+    };
+    camAnimRef.current = requestAnimationFrame(tick);
   };
 
   const scheduleDraw = () => {
@@ -563,49 +720,86 @@ export function MapCanvas({
     draw();
     return () => {
       ro.disconnect();
+      stopCamAnim();
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
   }, []);
 
   useEffect(() => {
+    if (frozenRef.current) {
+      incomingCellsRef.current = cells;
+      return;
+    }
+    cellsRef.current = cells;
     draw();
-  }, [cells, loading, mappingMode, scanMode, lookDir]);
+  }, [cells, mappingMode]);
 
   useEffect(() => {
-    const cam = camDefaults(scanMode, lookDir);
-    yawRef.current = cam.yaw;
-    pitchRef.current = cam.pitch;
-    zoomRef.current = cam.zoom;
-    draw();
-    viewCbRef.current?.(yawRef.current, pitchRef.current);
-  }, [scanMode, lookDir]);
+    const pose = camDefaults(scanMode, lookRef.current);
+    if (camInitRef.current) {
+      camInitRef.current = false;
+      yawRef.current = pose.yaw;
+      pitchRef.current = pose.pitch;
+      zoomRef.current = pose.zoom;
+      blendRef.current = pose.blend;
+      headingRef.current = pose.heading;
+      draw();
+      viewCbRef.current?.(yawRef.current, pitchRef.current);
+      return;
+    }
+    stopCamAnim();
+    panTo(pose);
+  }, [scanMode]);
+
+  useEffect(() => {
+    const target = lookDir === 'rear' ? Math.PI : 0;
+    if (scanRef.current !== 'windshield') {
+      headingRef.current = target;
+      return;
+    }
+    if (Math.abs(wrapPi(target - headingRef.current)) < 0.04) {
+      headingRef.current = target;
+      return;
+    }
+    sweepWedge(target);
+  }, [lookDir]);
+
+  useEffect(() => {
+    if (!awaitingLoadRef.current) return;
+    if (loading) {
+      sawLoadRef.current = true;
+      incomingCellsRef.current = cells;
+      return;
+    }
+    if (!sawLoadRef.current) return;
+    incomingCellsRef.current = cells;
+    awaitingLoadRef.current = false;
+    beginHeldPan();
+  }, [loading, cells]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
       const step = e.shiftKey ? 0.12 : 0.06;
-      if (e.key === 'ArrowLeft')  { yawRef.current = clampYaw(yawRef.current - step); scheduleDraw(); e.preventDefault(); }
-      if (e.key === 'ArrowRight') { yawRef.current = clampYaw(yawRef.current + step); scheduleDraw(); e.preventDefault(); }
-      if (e.key === 'ArrowUp')    { pitchRef.current = Math.min(PITCH_MAX, pitchRef.current + step * 0.6); scheduleDraw(); e.preventDefault(); }
-      if (e.key === 'ArrowDown')  { pitchRef.current = Math.max(PITCH_MIN, pitchRef.current - step * 0.6); scheduleDraw(); e.preventDefault(); }
+      if (e.key === 'ArrowLeft')  { stopCamAnim(); yawRef.current = clampYaw(yawRef.current - step); scheduleDraw(); e.preventDefault(); }
+      if (e.key === 'ArrowRight') { stopCamAnim(); yawRef.current = clampYaw(yawRef.current + step); scheduleDraw(); e.preventDefault(); }
+      if (e.key === 'ArrowUp')    { stopCamAnim(); pitchRef.current = Math.min(PITCH_MAX, pitchRef.current + step * 0.6); scheduleDraw(); e.preventDefault(); }
+      if (e.key === 'ArrowDown')  { stopCamAnim(); pitchRef.current = Math.max(PITCH_MIN, pitchRef.current - step * 0.6); scheduleDraw(); e.preventDefault(); }
       if (e.key === '=' || e.key === '+') {
+        stopCamAnim();
         zoomRef.current = Math.min(ZOOM_MAX, zoomRef.current * 1.12);
         scheduleDraw();
         e.preventDefault();
       }
       if (e.key === '-' || e.key === '_') {
+        stopCamAnim();
         zoomRef.current = Math.max(ZOOM_MIN, zoomRef.current / 1.12);
         scheduleDraw();
         e.preventDefault();
       }
       if (e.key === 'Home' || e.key === 'r' || e.key === 'R') {
-        const cam = camDefaults(scanRef.current, lookRef.current);
-        yawRef.current = cam.yaw;
-        pitchRef.current = cam.pitch;
-        zoomRef.current = cam.zoom;
-        draw();
-        viewCbRef.current?.(yawRef.current, pitchRef.current);
+        panTo(camDefaults(scanRef.current, lookRef.current));
         e.preventDefault();
       }
     };
@@ -615,6 +809,8 @@ export function MapCanvas({
 
   const onPointerDown = (e: PointerEvent<HTMLCanvasElement>) => {
     if (e.button !== 0) return;
+    stopCamAnim();
+    blendRef.current = scanRef.current === 'windshield' ? 1 : 0;
     dragRef.current = { x: e.clientX, y: e.clientY };
     e.currentTarget.setPointerCapture(e.pointerId);
     e.currentTarget.style.cursor = 'grabbing';
@@ -640,12 +836,7 @@ export function MapCanvas({
   };
 
   const onDoubleClick = () => {
-    const cam = camDefaults(scanRef.current, lookRef.current);
-    yawRef.current = cam.yaw;
-    pitchRef.current = cam.pitch;
-    zoomRef.current = cam.zoom;
-    draw();
-    viewCbRef.current?.(yawRef.current, pitchRef.current);
+    panTo(camDefaults(scanRef.current, lookRef.current));
   };
 
   useEffect(() => {
@@ -654,6 +845,7 @@ export function MapCanvas({
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       e.stopPropagation();
+      stopCamAnim();
       const delta = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
       const factor = Math.exp(-delta * 0.00135);
       zoomRef.current = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zoomRef.current * factor));
