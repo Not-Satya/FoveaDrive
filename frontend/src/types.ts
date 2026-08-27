@@ -4,6 +4,10 @@ export type VehicleProfile = 'SEDAN' | 'SUV' | 'TRUCK';
 
 export type MappingMode = 'RAW_POINT_CLOUD' | 'DRIVABILITY_MAP';
 
+export type ScanMode = 'surround' | 'windshield';
+
+export type LookDir = 'front' | 'rear';
+
 export interface KinematicParams {
   groundClearance: number;  // cm
   chassisWidth:    number;  // metres

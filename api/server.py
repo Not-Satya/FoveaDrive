@@ -16,8 +16,11 @@ from main import (
     build_stats,
     invalidate_base_grid,
     set_active_frame,
+    set_scan_mode,
+    set_look_dir,
     get_dataset_info,
 )
+from config import DATA_CONFIG
 from models.vehicle import VEHICLE_PROFILES, get_vehicle
 
 # ---------------------------------------------------------------------------
@@ -41,15 +44,22 @@ app.add_middleware(
 )
 
 # ---------------------------------------------------------------------------
-# Simple in-process cache keyed by vehicle type
+# Simple in-process cache keyed by vehicle + scan mode
 # ---------------------------------------------------------------------------
 _cache: Dict[str, List[Dict]] = {}
 
 
+def _cache_key(vehicle: str) -> str:
+    mode = DATA_CONFIG.get("scan_mode", "surround")
+    look = DATA_CONFIG.get("look_dir", "front") if mode == "windshield" else "front"
+    return f"{vehicle}|{mode}|{look}"
+
+
 def _get_cached(vehicle: str) -> List[Dict]:
-    if vehicle not in _cache:
-        _cache[vehicle] = run_pipeline(vehicle)
-    return _cache[vehicle]
+    key = _cache_key(vehicle)
+    if key not in _cache:
+        _cache[key] = run_pipeline(vehicle)
+    return _cache[key]
 
 
 def _apply_frame(frame: Optional[str]) -> None:
@@ -58,6 +68,17 @@ def _apply_frame(frame: Optional[str]) -> None:
         return
     if set_active_frame(frame):
         _cache.clear()
+
+
+def _apply_scan(scan: Optional[str], look: Optional[str] = None) -> None:
+    """Switch surround vs windshield and optional front/rear look."""
+    if scan:
+        raw = scan.strip().lower()
+        set_scan_mode(scan)
+        if raw in ("rear", "back", "behind", "reverse"):
+            set_look_dir("rear")
+    if look:
+        set_look_dir(look)
 
 
 # ---------------------------------------------------------------------------
@@ -95,11 +116,14 @@ def get_dataset():
 def get_map(
     vehicle: str = Query(default="sedan", description="sedan | suv | truck"),
     frame: Optional[str] = Query(default=None, description="frame_000000 | synthetic"),
+    scan: Optional[str] = Query(default=None, description="surround | windshield"),
+    look: Optional[str] = Query(default=None, description="front | rear (windshield only)"),
 ):
     """Full grid cells for a preset vehicle profile."""
     try:
         get_vehicle(vehicle)
         _apply_frame(frame)
+        _apply_scan(scan, look)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return _get_cached(vehicle)
@@ -109,11 +133,14 @@ def get_map(
 def get_map_stats(
     vehicle: str = Query(default="sedan", description="sedan | suv | truck"),
     frame: Optional[str] = Query(default=None, description="frame_000000 | synthetic"),
+    scan: Optional[str] = Query(default=None, description="surround | windshield"),
+    look: Optional[str] = Query(default=None, description="front | rear (windshield only)"),
 ):
     """Summary statistics for a preset vehicle type."""
     try:
         get_vehicle(vehicle)
         _apply_frame(frame)
+        _apply_scan(scan, look)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return build_stats(_get_cached(vehicle), vehicle_label=vehicle)
@@ -126,6 +153,8 @@ def get_map_custom(
     wheel_radius:     float          = Query(...,  description="Wheel radius in metres e.g. 0.32"),
     max_roughness:    Optional[float] = Query(None, description="Height-std tolerance (auto-derived if omitted)"),
     frame:            Optional[str]  = Query(None, description="frame_000000 | synthetic"),
+    scan:             Optional[str]  = Query(None, description="surround | windshield"),
+    look:             Optional[str]  = Query(None, description="front | rear (windshield only)"),
 ):
     """
     Run the pipeline with fully custom vehicle parameters — used by the
@@ -145,6 +174,7 @@ def get_map_custom(
 
     try:
         _apply_frame(frame)
+        _apply_scan(scan, look)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

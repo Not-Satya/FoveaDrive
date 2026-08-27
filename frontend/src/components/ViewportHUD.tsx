@@ -1,7 +1,7 @@
 // frontend/src/components/ViewportHUD.tsx
 
-import { useState } from 'react';
-import { MappingMode } from '../types';
+import { useState, type ReactNode } from 'react';
+import { MappingMode, ScanMode, LookDir } from '../types';
 import { MapCanvas } from './MapCanvas';
 import type { GridCell } from '../api/foveadriveApi';
 
@@ -10,6 +10,10 @@ interface ViewportHUDProps {
   speed:             number;
   mappingMode:       MappingMode;
   toggleMappingMode: () => void;
+  scanMode:          ScanMode;
+  toggleScanMode:    () => void;
+  lookDir:           LookDir;
+  toggleLookDir:     () => void;
   cells:             GridCell[];
   loading:           boolean;
   heading?:          number;
@@ -25,6 +29,10 @@ export function ViewportHUD({
   speed,
   mappingMode,
   toggleMappingMode,
+  scanMode,
+  toggleScanMode,
+  lookDir,
+  toggleLookDir,
   cells,
   loading,
   heading = 359.7,
@@ -42,13 +50,13 @@ export function ViewportHUD({
         isHazardous ? 'shadow-[inset_0_0_180px_rgba(236,36,176,0.14)]' : ''
       }`}
     >
-      <div className="scanline pointer-events-none z-30" />
-
       <div className="absolute inset-0 z-10">
         <MapCanvas
           cells={cells}
           loading={loading}
           mappingMode={mappingMode}
+          scanMode={scanMode}
+          lookDir={lookDir}
           onViewChange={(yaw) => setViewYaw(yaw)}
         />
       </div>
@@ -57,6 +65,14 @@ export function ViewportHUD({
       <div className="absolute left-4 top-10 z-20 pointer-events-none flex flex-col gap-3">
         <div className="text-[10px] font-mono tracking-widest text-icy-blue/70 uppercase tabular-nums">
           SYSTEM_SPEED: <span className="text-icy-blue">{speed.toFixed(1)} KM/H</span>
+        </div>
+        <div className="text-[10px] font-mono tracking-widest text-icy-blue/55 uppercase tabular-nums">
+          GRID: <span className="text-icy-blue">{cells.length.toLocaleString()} cells</span>
+          {scanMode === 'windshield' ? (
+            <span className="text-emerald-400"> · 120° {lookDir === 'rear' ? 'REAR' : 'FRONT'}</span>
+          ) : (
+            <span className="text-icy-blue/45"> · 360°</span>
+          )}
         </div>
 
         <div
@@ -109,19 +125,40 @@ export function ViewportHUD({
 
       {/* ── Right HUD: mode + compass ────────────────────────────────────── */}
       <div className="absolute top-10 right-4 z-20 flex flex-col items-end gap-3">
+        <div className="relative">
+          <button
+            onClick={toggleScanMode}
+            className={`text-[10px] font-mono tracking-widest uppercase px-3 py-1.5 border transition-colors duration-[600ms] ease-[cubic-bezier(0.33,0,0.2,1)] backdrop-blur-sm ${
+              scanMode === 'windshield'
+                ? 'border-emerald-400/60 bg-emerald-500/10 text-emerald-300'
+                : 'border-[#2B4C6F]/50 bg-[#060B14]/50 text-icy-blue/60 hover:text-icy-blue/90 hover:border-[#2B4C6F]'
+            }`}
+          >
+            SCAN: {scanMode === 'windshield' ? 'WINDSHIELD 120°' : 'SURROUND 360°'}
+          </button>
+          <div className="absolute right-full top-0 mr-2">
+            <SlideReveal open={scanMode === 'windshield'} axis="x">
+              <LookToggle lookDir={lookDir} onToggle={toggleLookDir} />
+            </SlideReveal>
+          </div>
+        </div>
         <button
           onClick={toggleMappingMode}
-          className="text-[10px] font-mono tracking-widest uppercase px-3 py-1.5 border border-[#2B4C6F]/50 bg-[#060B14]/50 text-icy-blue/60 hover:text-icy-blue/90 hover:border-[#2B4C6F] transition-all backdrop-blur-sm"
+          className="text-[10px] font-mono tracking-widest uppercase px-3 py-1.5 border border-[#2B4C6F]/50 bg-[#060B14]/50 text-icy-blue/60 hover:text-icy-blue/90 hover:border-[#2B4C6F] transition-colors duration-[600ms] ease-[cubic-bezier(0.33,0,0.2,1)] backdrop-blur-sm"
         >
           MODE: {mappingMode === 'RAW_POINT_CLOUD' ? 'GT OVERLAY' : 'DRIVABILITY_MAP'}
         </button>
-        {playing && (
-          <div className="text-[9px] font-mono tracking-[0.2em] uppercase px-3 py-1 border border-emerald-400/50 bg-emerald-500/10 text-emerald-300">
-            DATASET PLAYBACK
+        <div className="relative h-0 w-full">
+          <div className="absolute right-0 top-2">
+            <SlideReveal open={playing}>
+              <div className="text-[9px] font-mono tracking-[0.2em] uppercase px-3 py-1 border border-emerald-400/50 bg-emerald-500/10 text-emerald-300 whitespace-nowrap">
+                DATASET PLAYBACK
+              </div>
+            </SlideReveal>
           </div>
-        )}
+        </div>
         <div className="text-[8px] font-mono tracking-widest uppercase text-icy-blue/40 text-right pointer-events-none">
-          scroll to zoom · drag to orbit · dbl-click reset
+          scroll to zoom · {scanMode === 'windshield' ? 'peek yaw ·' : 'drag to orbit ·'} dbl-click reset
         </div>
 
         <div className="pointer-events-none w-[7.5rem] h-[7.5rem] relative">
@@ -143,7 +180,9 @@ export function ViewportHUD({
           </svg>
           <div className="absolute inset-0 flex flex-col items-center justify-center font-mono">
             <div className="text-[11px] text-icy-blue tabular-nums tracking-wider">{viewDeg.toFixed(1)}°</div>
-            <div className="text-[8px] text-icy-blue/50 uppercase tracking-widest">view yaw</div>
+            <div className="text-[8px] text-icy-blue/50 uppercase tracking-widest">
+              {scanMode === 'windshield' ? (lookDir === 'rear' ? 'rear view' : 'windshield') : 'view yaw'}
+            </div>
           </div>
         </div>
       </div>
@@ -160,5 +199,73 @@ export function ViewportHUD({
         />
       ))}
     </section>
+  );
+}
+
+const HUD_SHIFT =
+  'transform 560ms cubic-bezier(0.37, 0, 0.63, 1), opacity 420ms cubic-bezier(0.37, 0, 0.63, 1)';
+
+export function SlideReveal({
+  open,
+  axis = 'y',
+  children,
+}: {
+  open: boolean;
+  axis?: 'x' | 'y';
+  children: ReactNode;
+}) {
+  const hidden = axis === 'x' ? 'translate3d(14px,0,0)' : 'translate3d(0,12px,0)';
+  return (
+    <div
+      className={open ? undefined : 'pointer-events-none'}
+      style={{
+        transform: open ? 'translate3d(0,0,0)' : hidden,
+        opacity: open ? 1 : 0,
+        transition: HUD_SHIFT,
+        willChange: 'transform, opacity',
+        backfaceVisibility: 'hidden',
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+export function LookToggle({
+  lookDir,
+  onToggle,
+  className = '',
+}: {
+  lookDir: LookDir;
+  onToggle: () => void;
+  className?: string;
+}) {
+  const rear = lookDir === 'rear';
+
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-pressed={rear}
+      className={`inline-flex w-[9.75rem] items-center justify-between gap-2.5 border px-3 py-1.5 uppercase tracking-widest text-[10px] transition-colors backdrop-blur-sm ${
+        rear
+          ? 'border-amber-400/60 bg-amber-500/10 text-amber-200'
+          : 'border-emerald-400/50 bg-emerald-500/10 text-emerald-300'
+      } ${className}`}
+    >
+      <span className="tabular-nums">{rear ? 'REAR' : 'FRONT'}</span>
+      <span
+        className={`relative h-4 w-8 shrink-0 rounded-full border transition-colors ${
+          rear ? 'border-amber-300/80 bg-amber-400/25' : 'border-emerald-300/80 bg-emerald-400/25'
+        }`}
+      >
+        <span
+          className={`absolute top-0.5 left-0.5 size-3 rounded-full transition-transform duration-[600ms] ease-[cubic-bezier(0.33,0,0.2,1)] ${
+            rear ? 'bg-amber-200' : 'bg-emerald-200'
+          }`}
+          style={{ transform: rear ? 'translate3d(14px,0,0)' : 'translate3d(0,0,0)' }}
+        />
+      </span>
+    </button>
   );
 }

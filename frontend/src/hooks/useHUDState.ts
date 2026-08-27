@@ -3,7 +3,7 @@
 // Central HUD state — live map data from the backend + curated KITTI frames.
 
 import { useState, useEffect, useRef, useCallback, type Dispatch, type SetStateAction } from 'react';
-import { VehicleProfile, KinematicParams, TelemetryData, MappingMode } from '../types';
+import { VehicleProfile, KinematicParams, TelemetryData, MappingMode, ScanMode, LookDir } from '../types';
 import {
   fetchMap,
   fetchCustomMap,
@@ -64,6 +64,8 @@ export function useHUDState() {
   const [activeProfile,   setActiveProfile]   = useState<VehicleProfile>('SEDAN');
   const [kinematicParams, setKinematicParams] = useState<KinematicParams>(PROFILES.SEDAN);
   const [mappingMode,     setMappingMode]     = useState<MappingMode>('RAW_POINT_CLOUD');
+  const [scanMode,        setScanMode]        = useState<ScanMode>('surround');
+  const [lookDir,         setLookDir]         = useState<LookDir>('front');
 
   const [telemetry, setTelemetry] = useState<TelemetryData>({
     fpsRate: 59.8,
@@ -164,7 +166,7 @@ export function useHUDState() {
     if (isCustomMode) return;
     let cancelled = false;
     setMapLoading(true);
-    fetchMap(activeProfile, frameId)
+    fetchMap(activeProfile, frameId, scanMode, scanMode === 'windshield' ? lookDir : undefined)
       .then(data => {
         if (cancelled) return;
         setCells(data);
@@ -178,7 +180,7 @@ export function useHUDState() {
       .catch(console.error)
       .finally(() => { if (!cancelled) setMapLoading(false); });
     return () => { cancelled = true; };
-  }, [activeProfile, isCustomMode, frameId, catalogReady]);
+  }, [activeProfile, isCustomMode, frameId, catalogReady, scanMode, lookDir]);
 
   useEffect(() => {
     if (!catalogReady) return;
@@ -190,6 +192,8 @@ export function useHUDState() {
       width:            debouncedParams.chassisWidth,
       wheel_radius:     cmToM(debouncedParams.wheelRadius),
       frame:            frameId,
+      scan:             scanMode,
+      look:             scanMode === 'windshield' ? lookDir : undefined,
     })
       .then(({ cells: data, stats }) => {
         if (cancelled) return;
@@ -201,7 +205,7 @@ export function useHUDState() {
       .catch(console.error)
       .finally(() => { if (!cancelled) setMapLoading(false); });
     return () => { cancelled = true; };
-  }, [debouncedParams, isCustomMode, frameId, catalogReady]);
+  }, [debouncedParams, isCustomMode, frameId, catalogReady, scanMode, lookDir]);
 
   useEffect(() => {
     if (!playing || !catalogReady) return;
@@ -252,6 +256,29 @@ export function useHUDState() {
     setMappingMode(m => m === 'RAW_POINT_CLOUD' ? 'DRIVABILITY_MAP' : 'RAW_POINT_CLOUD');
   }, []);
 
+  const toggleScanMode = useCallback(() => {
+    setScanMode(m => {
+      if (m === 'windshield') {
+        setLookDir('front');
+        return 'surround';
+      }
+      return 'windshield';
+    });
+  }, []);
+
+  const setScan = useCallback((mode: ScanMode) => {
+    setScanMode(mode);
+    if (mode !== 'windshield') setLookDir('front');
+  }, []);
+
+  const setLook = useCallback((dir: LookDir) => {
+    setLookDir(dir);
+  }, []);
+
+  const toggleLookDir = useCallback(() => {
+    setLookDir(d => d === 'front' ? 'rear' : 'front');
+  }, []);
+
   useEffect(() => {
     if (playing) return;
     setTelemetry(t => ({
@@ -264,6 +291,8 @@ export function useHUDState() {
   return {
     activeProfile, kinematicParams,
     mappingMode, toggleMappingMode,
+    scanMode, toggleScanMode, setScan,
+    lookDir, setLook, toggleLookDir,
     telemetry,
     cells, drivablePct, terrainStatus, mapLoading,
     frames, frameId, datasetCurrent,

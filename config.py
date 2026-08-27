@@ -14,6 +14,10 @@ DATA_CONFIG = {
     "forward_only":     False,            # keep only points ahead of the vehicle (x > 0)
     "min_range":        1.5,              # drop ego-vehicle / near-sensor returns (m)
     "z_clip":           (-4.0, 20.0),     # drop flyers in sensor frame before ground shift
+    # surround = full 360° cloud (current 3/4 map). windshield = driver FOV wedge.
+    "scan_mode":            "surround",   # "surround" | "windshield"
+    "windshield_fov_deg":   120.0,        # horizontal FOV kept in windshield mode
+    "look_dir":             "front",      # "front" | "rear" (rear only used in windshield)
 }
 
 GRID_CONFIG = {

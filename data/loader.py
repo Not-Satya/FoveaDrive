@@ -176,6 +176,33 @@ def load_frame(
     return np.ascontiguousarray(pts, dtype=np.float32), labels
 
 
+def clip_azimuth_fov(
+    pts: np.ndarray,
+    labels: np.ndarray | None,
+    fov_deg: float,
+    heading: str = "front",
+) -> tuple[np.ndarray, np.ndarray | None]:
+    """
+    Keep only points inside a 120° azimuth wedge.
+
+    KITTI frame: X forward, Y left.
+    heading="front" → ±FOV/2 from +X (windshield).
+    heading="rear"  → ±FOV/2 from −X (rear window / backup view).
+    Ground Z is estimated on the full cloud before this clip.
+    """
+    if pts.size == 0 or fov_deg >= 359.0:
+        return pts, labels
+    half = np.deg2rad(float(fov_deg) / 2.0)
+    rear = heading == "rear"
+    along = -pts[:, 0] if rear else pts[:, 0]
+    az = np.arctan2(pts[:, 1], -pts[:, 0] if rear else pts[:, 0])
+    keep = (along > 0.0) & (np.abs(az) <= half)
+    pts = np.ascontiguousarray(pts[keep], dtype=np.float32)
+    if labels is not None:
+        labels = np.ascontiguousarray(labels[keep])
+    return pts, labels
+
+
 def _compact_frame(entry: dict) -> dict:
     metrics = entry.get("metrics") or {}
     return {

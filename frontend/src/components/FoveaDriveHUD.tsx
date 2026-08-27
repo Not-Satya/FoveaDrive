@@ -1,11 +1,10 @@
 // frontend/src/components/FoveaDriveHUD.tsx
 
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { Header }          from "./Header";
 import { ViewportHUD }     from "./ViewportHUD";
 import { ControlPanel }    from "./ControlPanel";
 import { Footer }          from "./Footer";
-import { CustomScrollbar } from "./CustomScrollbar";
 import { useHUDState }     from "../hooks/useHUDState";
 
 export function FoveaDriveHUD() {
@@ -21,7 +20,6 @@ export function FoveaDriveHUD() {
   } = hudState;
 
   const [panelCollapsed, setPanelCollapsed] = useState(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
 
   return (
     <div className="text-icy-blue selection:bg-white/20 text-xs bg-background h-screen w-screen overflow-hidden font-mono relative">
@@ -32,6 +30,10 @@ export function FoveaDriveHUD() {
           speed={speed}
           mappingMode={mappingMode}
           toggleMappingMode={toggleMappingMode}
+          scanMode={hudState.scanMode}
+          toggleScanMode={hudState.toggleScanMode}
+          lookDir={hudState.lookDir}
+          toggleLookDir={hudState.toggleLookDir}
           cells={cells}
           loading={mapLoading && !hudState.playing}
           playing={hudState.playing}
@@ -40,13 +42,7 @@ export function FoveaDriveHUD() {
         />
       </div>
 
-      {/* pointer-events-none so drag-orbit on the map works through the chrome */}
-      <div
-        ref={scrollRef}
-        className="relative z-10 h-full flex flex-col overflow-y-auto scrollbar-hide pointer-events-none"
-      >
-        <CustomScrollbar scrollContainerRef={scrollRef} />
-
+      <div className="relative z-10 h-full flex flex-col pointer-events-none">
         <div className="pointer-events-auto">
           <Header
             lat={telemetry.lat}
@@ -56,17 +52,16 @@ export function FoveaDriveHUD() {
             live={hudState.playing}
           />
         </div>
+      </div>
 
-        <div className="flex-1" />
-
-        <div className="pointer-events-auto">
-          <ControlPanel
-            {...hudState}
-            collapsed={panelCollapsed}
-            onToggleCollapse={() => setPanelCollapsed(v => !v)}
-          />
-          {!panelCollapsed && <Footer />}
-        </div>
+      <div className="fixed inset-x-0 bottom-0 z-20 pointer-events-none px-3 pb-3">
+        <ControlPanel
+          {...hudState}
+          collapsed={panelCollapsed}
+          onToggleCollapse={() => setPanelCollapsed(v => !v)}
+        >
+          <Footer />
+        </ControlPanel>
       </div>
 
     </div>

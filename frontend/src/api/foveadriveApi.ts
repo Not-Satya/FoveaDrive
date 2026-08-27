@@ -66,15 +66,19 @@ export interface CustomMapResponse {
 export const fetchDataset = (): Promise<DatasetResponse> =>
   get<DatasetResponse>('/dataset');
 
-export const fetchMap = (vehicle: string, frame?: string): Promise<GridCell[]> => {
+export const fetchMap = (vehicle: string, frame?: string, scan?: string, look?: string): Promise<GridCell[]> => {
   const q = new URLSearchParams({ vehicle: vehicle.toLowerCase() });
   if (frame) q.set('frame', frame);
+  if (scan) q.set('scan', scan);
+  if (look) q.set('look', look);
   return get<GridCell[]>(`/map?${q}`);
 };
 
-export const fetchMapStats = (vehicle: string, frame?: string): Promise<MapStats> => {
+export const fetchMapStats = (vehicle: string, frame?: string, scan?: string, look?: string): Promise<MapStats> => {
   const q = new URLSearchParams({ vehicle: vehicle.toLowerCase() });
   if (frame) q.set('frame', frame);
+  if (scan) q.set('scan', scan);
+  if (look) q.set('look', look);
   return get<MapStats>(`/map/stats?${q}`);
 };
 
@@ -83,6 +87,8 @@ export const fetchCustomMap = (p: {
   width: number;
   wheel_radius: number;
   frame?: string;
+  scan?: string;
+  look?: string;
 }): Promise<CustomMapResponse> => {
   const q = new URLSearchParams({
     ground_clearance: String(p.ground_clearance),
@@ -90,5 +96,7 @@ export const fetchCustomMap = (p: {
     wheel_radius:     String(p.wheel_radius),
   });
   if (p.frame) q.set('frame', p.frame);
+  if (p.scan) q.set('scan', p.scan);
+  if (p.look) q.set('look', p.look);
   return get<CustomMapResponse>(`/map/custom?${q}`);
 };

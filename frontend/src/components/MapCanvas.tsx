@@ -4,25 +4,45 @@
 
 import { useEffect, useRef, type PointerEvent } from 'react';
 import type { GridCell } from '../api/foveadriveApi';
-import type { MappingMode } from '../types';
+import type { MappingMode, ScanMode, LookDir } from '../types';
 
 interface MapCanvasProps {
   cells: GridCell[];
   loading?: boolean;
   mappingMode?: MappingMode;
+  scanMode?: ScanMode;
+  lookDir?: LookDir;
   className?: string;
   onViewChange?: (yaw: number, pitch: number) => void;
 }
 
 const WORLD_RANGE = 42;
+const WINDSHIELD_RANGE = 36;
+const WINDSHIELD_FOV = Math.PI * (120 / 180); // 120°
+const WINDSHIELD_YAW_MAX = 0.42;
 const DEFAULT_YAW = Math.PI / 5;
 const DEFAULT_PITCH = 0.58;
 const DEFAULT_ZOOM = 1;
+const WINDSHIELD_YAW = 0;
+const REAR_YAW = Math.PI;
+const WINDSHIELD_PITCH = 0.80;
+const WINDSHIELD_ZOOM = 1.2;
 const PITCH_MIN = 0.22;
 const PITCH_MAX = 0.92;
 const ZOOM_MIN = 0.4;
 const ZOOM_MAX = 5;
 const VOXEL_INSET = 0.10;
+
+function camDefaults(mode: ScanMode, look: LookDir = 'front') {
+  if (mode === 'windshield') {
+    return {
+      yaw: look === 'rear' ? REAR_YAW : WINDSHIELD_YAW,
+      pitch: WINDSHIELD_PITCH,
+      zoom: WINDSHIELD_ZOOM,
+    };
+  }
+  return { yaw: DEFAULT_YAW, pitch: DEFAULT_PITCH, zoom: DEFAULT_ZOOM };
+}
 
 type Kind = 'clear' | 'rough' | 'nearby' | 'blocked' | 'pothole';
 type RGB = [number, number, number];
@@ -202,6 +222,8 @@ function renderMap(
   yaw = DEFAULT_YAW,
   pitch = DEFAULT_PITCH,
   zoom = DEFAULT_ZOOM,
+  scanMode: ScanMode = 'surround',
+  lookDir: LookDir = 'front',
 ) {
   const parent = canvas.parentElement;
   const cssW = parent?.clientWidth  || canvas.clientWidth  || 1;
@@ -220,12 +242,23 @@ function renderMap(
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, cssW, cssH);
 
+  const windshield = scanMode === 'windshield';
+  const rear = windshield && lookDir === 'rear';
+  const along = rear ? -1 : 1;
+  const range = windshield ? WINDSHIELD_RANGE : WORLD_RANGE;
+  const fovHalf = WINDSHIELD_FOV / 2;
   const cos = Math.cos(yaw);
   const sin = Math.sin(yaw);
   const ox = cssW / 2;
-  const oy = cssH * 0.58;
-  const extent = WORLD_RANGE * (Math.abs(cos) + Math.abs(sin));
-  const scale = Math.min(cssW / (extent * 2.2), cssH / (extent * 2.2 * pitch)) * zoom;
+  const oy = cssH * (windshield ? 0.88 : 0.58);
+  let scale: number;
+  if (windshield) {
+    const halfW = range * Math.tan(fovHalf);
+    scale = Math.min(cssW / (halfW * 2.2), cssH / (range * pitch * 1.28)) * zoom;
+  } else {
+    const extent = range * (Math.abs(cos) + Math.abs(sin));
+    scale = Math.min(cssW / (extent * 2.2), cssH / (extent * 2.2 * pitch)) * zoom;
+  }
   const heightPx = scale * 1.35;
 
   const project = (x: number, y: number, z: number): Pt => {
@@ -236,6 +269,16 @@ function renderMap(
       y: oy - ry * scale * pitch - z * heightPx,
       d: cos * x + sin * y,
     };
+  };
+
+  const inFov = (x: number, y: number) => {
+    if (!windshield) return true;
+    if (rear) {
+      if (x > 0.6) return false;
+      return Math.abs(Math.atan2(y, -x)) <= fovHalf + 0.06;
+    }
+    if (x < -0.6) return false;
+    return Math.abs(Math.atan2(y, x)) <= fovHalf + 0.06;
   };
 
   const quad = (pts: Pt[], fill: string, stroke?: string) => {
@@ -268,25 +311,59 @@ function renderMap(
   ctx.save();
   ctx.lineWidth = 0.6;
   ctx.strokeStyle = 'rgba(43,76,111,0.22)';
-  for (let v = -WORLD_RANGE; v <= WORLD_RANGE; v += 5) {
-    const a = project(-WORLD_RANGE, v, 0);
-    const b = project( WORLD_RANGE, v, 0);
-    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
-    const c = project(v, -WORLD_RANGE, 0);
-    const d = project(v,  WORLD_RANGE, 0);
-    ctx.beginPath(); ctx.moveTo(c.x, c.y); ctx.lineTo(d.x, d.y); ctx.stroke();
+  if (windshield) {
+    for (let v = 5; v <= range; v += 5) {
+      const span = v * Math.tan(fovHalf);
+      const a = project(along * v, -span, 0);
+      const b = project(along * v,  span, 0);
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    }
+    for (const az of [-fovHalf, -fovHalf / 2, 0, fovHalf / 2, fovHalf]) {
+      const a = project(0, 0, 0);
+      const b = project(along * Math.cos(az) * range, Math.sin(az) * range, 0);
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    }
+  } else {
+    for (let v = -range; v <= range; v += 5) {
+      const a = project(-range, v, 0);
+      const b = project( range, v, 0);
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+      const c = project(v, -range, 0);
+      const d = project(v,  range, 0);
+      ctx.beginPath(); ctx.moveTo(c.x, c.y); ctx.lineTo(d.x, d.y); ctx.stroke();
+    }
   }
   ctx.restore();
 
+  if (windshield) {
+    const origin = project(0, 0, 0);
+    ctx.beginPath();
+    ctx.moveTo(origin.x, origin.y);
+    for (let i = 0; i <= 48; i++) {
+      const az = -fovHalf + (i / 48) * WINDSHIELD_FOV;
+      const p = project(along * Math.cos(az) * range, Math.sin(az) * range, 0);
+      ctx.lineTo(p.x, p.y);
+    }
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(188,227,255,0.04)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(188,227,255,0.35)';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+  }
+
   const drawRing = (r: number, color: string, width: number) => {
     ctx.beginPath();
-    for (let i = 0; i <= 72; i++) {
-      const t = (i / 72) * Math.PI * 2;
+    const steps = windshield ? 36 : 72;
+    const a0 = windshield ? (rear ? Math.PI - fovHalf : -fovHalf) : 0;
+    const a1 = windshield ? (rear ? Math.PI + fovHalf : fovHalf) : Math.PI * 2;
+    for (let i = 0; i <= steps; i++) {
+      const t = a0 + (i / steps) * (a1 - a0);
       const p = project(Math.cos(t) * r, Math.sin(t) * r, 0);
       if (i === 0) ctx.moveTo(p.x, p.y);
       else ctx.lineTo(p.x, p.y);
     }
-    ctx.closePath();
+    if (!windshield) ctx.closePath();
     ctx.setLineDash([5, 7]);
     ctx.strokeStyle = color;
     ctx.lineWidth = width;
@@ -297,7 +374,7 @@ function renderMap(
   drawRing(30, 'rgba(188,227,255,0.18)', 1.2);
 
   const labelRing = (r: number, text: string, color: string) => {
-    const p = project(r, 0, 0);
+    const p = project(along * r, 0, 0);
     ctx.save();
     ctx.fillStyle = color;
     ctx.font = '9px "Space Mono", monospace';
@@ -311,7 +388,7 @@ function renderMap(
 
   const visible = cells
     .map((c, i) => ({ c, i }))
-    .filter(({ c }) => Math.abs(c.x) <= WORLD_RANGE + 2 && Math.abs(c.y) <= WORLD_RANGE + 2)
+    .filter(({ c }) => Math.abs(c.x) <= range + 2 && Math.abs(c.y) <= range + 2 && inFov(c.x, c.y))
     .sort((a, b) => (cos * b.c.x + sin * b.c.y) - (cos * a.c.x + sin * a.c.y));
 
   for (const { c: cell } of visible) {
@@ -423,6 +500,8 @@ export function MapCanvas({
   cells,
   loading = false,
   mappingMode = 'RAW_POINT_CLOUD',
+  scanMode = 'surround',
+  lookDir = 'front',
   className = '',
   onViewChange,
 }: MapCanvasProps) {
@@ -430,6 +509,8 @@ export function MapCanvas({
   const cellsRef = useRef(cells);
   const loadingRef = useRef(loading);
   const modeRef = useRef(mappingMode);
+  const scanRef = useRef(scanMode);
+  const lookRef = useRef(lookDir);
   const yawRef = useRef(DEFAULT_YAW);
   const pitchRef = useRef(DEFAULT_PITCH);
   const zoomRef = useRef(DEFAULT_ZOOM);
@@ -439,7 +520,15 @@ export function MapCanvas({
   cellsRef.current = cells;
   loadingRef.current = loading;
   modeRef.current = mappingMode;
+  scanRef.current = scanMode;
+  lookRef.current = lookDir;
   viewCbRef.current = onViewChange;
+
+  const clampYaw = (yaw: number) => {
+    if (scanRef.current !== 'windshield') return yaw;
+    const base = lookRef.current === 'rear' ? REAR_YAW : WINDSHIELD_YAW;
+    return Math.max(base - WINDSHIELD_YAW_MAX, Math.min(base + WINDSHIELD_YAW_MAX, yaw));
+  };
 
   const draw = () => {
     const canvas = canvasRef.current;
@@ -452,6 +541,8 @@ export function MapCanvas({
       yawRef.current,
       pitchRef.current,
       zoomRef.current,
+      scanRef.current,
+      lookRef.current,
     );
   };
 
@@ -478,15 +569,24 @@ export function MapCanvas({
 
   useEffect(() => {
     draw();
-  }, [cells, loading, mappingMode]);
+  }, [cells, loading, mappingMode, scanMode, lookDir]);
+
+  useEffect(() => {
+    const cam = camDefaults(scanMode, lookDir);
+    yawRef.current = cam.yaw;
+    pitchRef.current = cam.pitch;
+    zoomRef.current = cam.zoom;
+    draw();
+    viewCbRef.current?.(yawRef.current, pitchRef.current);
+  }, [scanMode, lookDir]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
       const step = e.shiftKey ? 0.12 : 0.06;
-      if (e.key === 'ArrowLeft')  { yawRef.current -= step; scheduleDraw(); e.preventDefault(); }
-      if (e.key === 'ArrowRight') { yawRef.current += step; scheduleDraw(); e.preventDefault(); }
+      if (e.key === 'ArrowLeft')  { yawRef.current = clampYaw(yawRef.current - step); scheduleDraw(); e.preventDefault(); }
+      if (e.key === 'ArrowRight') { yawRef.current = clampYaw(yawRef.current + step); scheduleDraw(); e.preventDefault(); }
       if (e.key === 'ArrowUp')    { pitchRef.current = Math.min(PITCH_MAX, pitchRef.current + step * 0.6); scheduleDraw(); e.preventDefault(); }
       if (e.key === 'ArrowDown')  { pitchRef.current = Math.max(PITCH_MIN, pitchRef.current - step * 0.6); scheduleDraw(); e.preventDefault(); }
       if (e.key === '=' || e.key === '+') {
@@ -500,9 +600,10 @@ export function MapCanvas({
         e.preventDefault();
       }
       if (e.key === 'Home' || e.key === 'r' || e.key === 'R') {
-        yawRef.current = DEFAULT_YAW;
-        pitchRef.current = DEFAULT_PITCH;
-        zoomRef.current = DEFAULT_ZOOM;
+        const cam = camDefaults(scanRef.current, lookRef.current);
+        yawRef.current = cam.yaw;
+        pitchRef.current = cam.pitch;
+        zoomRef.current = cam.zoom;
         draw();
         viewCbRef.current?.(yawRef.current, pitchRef.current);
         e.preventDefault();
@@ -526,7 +627,7 @@ export function MapCanvas({
     const dy = e.clientY - drag.y;
     drag.x = e.clientX;
     drag.y = e.clientY;
-    yawRef.current += dx * 0.0075;
+    yawRef.current = clampYaw(yawRef.current + dx * 0.0075);
     pitchRef.current = Math.max(PITCH_MIN, Math.min(PITCH_MAX, pitchRef.current - dy * 0.004));
     scheduleDraw();
   };
@@ -539,9 +640,10 @@ export function MapCanvas({
   };
 
   const onDoubleClick = () => {
-    yawRef.current = DEFAULT_YAW;
-    pitchRef.current = DEFAULT_PITCH;
-    zoomRef.current = DEFAULT_ZOOM;
+    const cam = camDefaults(scanRef.current, lookRef.current);
+    yawRef.current = cam.yaw;
+    pitchRef.current = cam.pitch;
+    zoomRef.current = cam.zoom;
     draw();
     viewCbRef.current?.(yawRef.current, pitchRef.current);
   };
